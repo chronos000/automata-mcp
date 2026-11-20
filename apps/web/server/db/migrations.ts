@@ -954,4 +954,15 @@ export const APP_MIGRATIONS: AppMigration[] = [
         ADD COLUMN onboarding_for text REFERENCES app.users(id) ON DELETE SET NULL;
     `,
   },
+  {
+    name: '0030_down_stalled_only',
+    sql: /* sql */ `
+      -- Whether the outage down_since dates began as a stuck socket and
+      -- nothing else (alerts.ts graceFor: 2 h grace). When it turns into
+      -- another fault before anyone was mailed, that fault's own 10-minute
+      -- grace starts then, not at down_since. Written only by alerts.ts.
+      ALTER TABLE app.instances
+        ADD COLUMN down_stalled_only boolean NOT NULL DEFAULT false;
+    `,
+  },
 ]

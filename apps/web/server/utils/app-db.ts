@@ -401,6 +401,13 @@ export interface AppInstance {
   down_since?: string
   alerted_at?: string
   /**
+   * The outage `down_since` dates began with `stalled` as its only fault
+   * (`graceFor`'s two hours). Cleared, with `down_since` restarted, when it
+   * turns into another fault before anyone was mailed. Written only by
+   * server/utils/alerts.ts.
+   */
+  down_stalled_only?: boolean
+  /**
    * WhatsApp only: how long Evolution has been reopening this account's socket
    * over and over. Written only by server/utils/alerts.ts, read through
    * `rowChurn()` in instances.ts.

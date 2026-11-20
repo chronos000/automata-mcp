@@ -78,7 +78,10 @@ What it will and will not send:
   `Connection Closed` and Evolution has not reopened the socket since. The
   connection is marked stuck from the next read. Being stuck is inferred, not
   read off Evolution, so the organization is mailed only after it has lasted
-  **two hours** (any other fault at the same time keeps the 10-minute grace);
+  **two hours** (any other fault at the same time keeps the 10-minute grace;
+  a stuck connection that turns into another fault before anyone was mailed
+  gets that fault's 10 minutes counted from the change, so the brief
+  reconnect that usually ends a stall mails nobody);
   the operator, below, hears at once. The mail says the Evolution service needs restarting, never
   Reconnect. A webhook delivery cannot start it. See
   [whatsapp.md](whatsapp.md) "Stuck with the socket dead".

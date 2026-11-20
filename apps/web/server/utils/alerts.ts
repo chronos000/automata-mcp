@@ -218,10 +218,40 @@ const GRACE_MS = 10 * 60 * 1000
  */
 const STALLED_GRACE_MS = 2 * 60 * 60 * 1000
 
+type GraceHealth = Pick<ConnectionHealth, 'state' | 'sessionLost' | 'flapping' | 'stalled'>
+
+/** Whether `stalled` is the only thing wrong — the inferred fault `STALLED_GRACE_MS` is for. */
+export function onlyStalled(health: GraceHealth): boolean {
+  return Boolean(health.stalled) && health.state === 'open' && !health.sessionLost && !health.flapping
+}
+
 /** How long `health` must last before the organization is told. */
-export function graceFor(health: Pick<ConnectionHealth, 'state' | 'sessionLost' | 'flapping' | 'stalled'>): number {
-  const onlyStalled = health.stalled && health.state === 'open' && !health.sessionLost && !health.flapping
-  return onlyStalled ? STALLED_GRACE_MS : GRACE_MS
+export function graceFor(health: GraceHealth): number {
+  return onlyStalled(health) ? STALLED_GRACE_MS : GRACE_MS
+}
+
+/**
+ * When the grace for an unmailed outage counts from. Pure.
+ *
+ * Normally `down_since`, so a fault that changes shape keeps its place in the
+ * queue. The exception: an outage that began as a stuck socket alone and is
+ * now something else. The ordinary ten minutes then start at this read, not at
+ * `down_since` — else a stall that had run past ten minutes mails the
+ * organization the moment it turns into anything else, and the likeliest
+ * thing is Evolution reopening the socket, a brief `connecting`/`close` that
+ * is the stall ending. Nov 20, 07:59 UTC: a 24-minute false stall ended in a
+ * reopen and mailed "disconnected", then "connected again" a minute later.
+ * Restarts at most once per outage: the row stops saying `stalled` only.
+ */
+export function graceStart(
+  outage: { downSince?: string, stalledOnly?: boolean },
+  health: GraceHealth,
+  now = Date.now(),
+): { at: number, restarted: boolean } {
+  const since = outage.downSince ? Date.parse(outage.downSince) : Number.NaN
+  if (Number.isNaN(since)) return { at: now, restarted: false }
+  if (outage.stalledOnly && !onlyStalled(health)) return { at: now, restarted: true }
+  return { at: since, restarted: false }
 }
 
 /**
@@ -285,7 +315,7 @@ async function evaluate(instance: AppInstance): Promise<void> {
     // either, so neither mail is true; close the outage quietly, or linking
     // again later would send a "connected again" for an outage long over.
     if (health.knownUnlinked && (instance.down_since || instance.alerted_at)) {
-      await updateRow('instances', instance.id, { down_since: null, alerted_at: null })
+      await updateRow('instances', instance.id, { down_since: null, alerted_at: null, down_stalled_only: false })
     }
     return
   }
@@ -304,18 +334,21 @@ async function evaluate(instance: AppInstance): Promise<void> {
       if (!sent) return
     }
 
-    await updateRow('instances', instance.id, { down_since: null, alerted_at: null })
+    await updateRow('instances', instance.id, { down_since: null, alerted_at: null, down_stalled_only: false })
     return
   }
 
   if (!instance.down_since) {
-    await updateRow('instances', instance.id, { down_since: new Date() })
+    await updateRow('instances', instance.id, { down_since: new Date(), down_stalled_only: onlyStalled(health) })
   }
 
   if (instance.alerted_at) return
 
-  const downSince = instance.down_since ? Date.parse(instance.down_since) : Date.now()
-  if (Date.now() - downSince < graceFor(health)) return
+  const grace = graceStart({ downSince: instance.down_since, stalledOnly: instance.down_stalled_only }, health)
+  if (grace.restarted) {
+    await updateRow('instances', instance.id, { down_since: new Date(grace.at), down_stalled_only: false })
+  }
+  if (Date.now() - grace.at < graceFor(health)) return
 
   const sent = await notifyWatchers(instance, canManage => outageMail(instance, health, canManage))
   if (sent) await updateRow('instances', instance.id, { alerted_at: new Date() })

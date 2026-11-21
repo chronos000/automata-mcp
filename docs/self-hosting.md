@@ -361,8 +361,9 @@ line per budget per minute, with ids only.
 is right for a single replica. With several replicas, each counts on its own and
 the effective budget multiplies by the number of replicas. To share the counts,
 set `NUXT_REDIS_URL`. It also shares two short-lived caches (the chat listing,
-one minute; each WhatsApp connection's history setting, five minutes). Nothing
-requires it:
+one minute; each WhatsApp connection's history setting, five minutes) and each
+WhatsApp connection's last message counts (kept up to seven days, so replicas
+and the next deploy start from them). Nothing requires it:
 
 | `NUXT_REDIS_URL` | behaviour |
 |---|---|
@@ -376,7 +377,8 @@ service, which Evolution caches into:
 - Use a database number of its own, for example `redis://redis:6379/1`.
   Evolution's cache uses `/6`.
 - The app writes only keys starting with `automata:`, every one with an expiry
-  (one minute for rate-limit counts, at most five minutes for cached values). It never runs `FLUSHALL`, `FLUSHDB`, `CONFIG` or `KEYS`.
+  (one minute for rate-limit counts, at most five minutes for cached values,
+  seven days for message counts). It never runs `FLUSHALL`, `FLUSHDB`, `CONFIG` or `KEYS`.
 - The app never picks up Evolution's `CACHE_REDIS_URI` on its own. Sharing is
   your decision.
 
@@ -398,6 +400,7 @@ has.
 | `instances` | one row per connection, `kind` of `whatsapp`, `postgres`, `telegram` or `imap` |
 | `instance_assignments` | "may use, not manage" grants to members |
 | `invitations` | SHA-256 of the invitation code, address, role, expiry |
+| `invitation_instances` | connections pre-assigned to a pending member invitation, turned into assignments when it is accepted |
 | `mcp_tokens` | SHA-256 of the connector token, holder, scope, expiry, `last_used_at` |
 | `mcp_token_clients`, `mcp_tool_calls` | which MCP clients used each token, and the Telemetry tool-call history (kept 30 days) |
 | `whatsapp_groups`, `whatsapp_group_scans` | WhatsApp group names and sizes from slow, one-group-at-a-time lookups, and when each account last ran them — see [WhatsApp](whatsapp.md) |

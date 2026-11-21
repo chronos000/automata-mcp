@@ -706,7 +706,7 @@ function evolutionStuckCause(instance: AppInstance, canManage: boolean, diagnosi
 
 /**
  * A dropped session in `connecting` is Evolution retrying by itself — the fork
- * (ju-li/evolution-api-v2) every few minutes until it lands, stock 2.3.7 on a
+ * (evolution-api-reforged) every few minutes until it lands, stock 2.3.7 on a
  * socket that hung while connecting. Reconnect answers 409 there
  * (`reconnectInstance`) and the dashboard offers no button, so the mail must
  * not send anyone to press one: it says Evolution is on it, and who restarts

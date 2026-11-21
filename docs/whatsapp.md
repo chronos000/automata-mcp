@@ -290,8 +290,9 @@ NUXT_EVOLUTION_DATABASE_URL=postgres://wamcp_search:change-me@localhost:5432/evo
 
 ### Indexes on Evolution's tables
 
-Evolution ships `@@index([instanceId])` and nothing else — no index on
-`messageTimestamp`, none on the `key` JSONB — so reading and searching are both a
+Stock Evolution ships `@@index([instanceId])` and nothing else — no index on
+`messageTimestamp`, none on the `key` JSONB (the fork adds only the unique index
+above, which has no timestamp) — so reading and searching are both a
 sequential scan within one account. History import makes that corpus much larger than it would
 otherwise be: a number with years of conversations arrives all at once at
 pairing, rather than accumulating. The queries carry a 10-second
@@ -885,8 +886,10 @@ Caveats worth knowing before you rely on it:
   stops at one year even when the phone holds more.
 - **Groups come too.** `syncFullHistory` overrides Evolution's group filter, so
   group chats appear in `list-chats` and in the token scope picker.
-- **Reads get slower as it grows.** Evolution indexes its `Message` table on
-  `instanceId` only; `remoteJid` lives inside a JSONB column with no index.
+- **Reads get slower as it grows.** Stock Evolution indexes its `Message` table
+  on `instanceId` only; `remoteJid` lives inside a JSONB column with no index
+  (the fork's unique index adds no timestamp). See
+  [Indexes on Evolution's tables](#indexes-on-evolutions-tables).
 
 ### Recent history only
 

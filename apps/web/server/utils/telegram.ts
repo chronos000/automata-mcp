@@ -1,5 +1,6 @@
 import type { AppInstance } from './app-db'
 import type { McpAuth } from './mcp-auth'
+import type { SendImage } from './send-image'
 import { assertNever, type ConnectionState } from '#shared/connection'
 
 /**
@@ -219,6 +220,14 @@ export function createTelegramBridge(creds: TelegramCredentials) {
     // count. The bridge stores it and fetches at backfill's own pace.
     backfill: (chatId: string) => client<BridgeBackfill>(`${session}/backfill`, { method: 'POST', body: { chatId } }),
     send: (chatId: string, text: string) => client<BridgeSent>(`${session}/send`, { method: 'POST', body: { chatId, text } }),
+    // One photo as base64 in JSON, like every other bridge route; the bridge
+    // caps this route's body to fit `MAX_SEND_IMAGE_BYTES`. Longer deadline:
+    // the bridge answers only once Telegram has the upload.
+    sendPhoto: (chatId: string, image: SendImage, caption: string) => client<BridgeSent>(`${session}/send-photo`, {
+      method: 'POST',
+      body: { chatId, caption, mimeType: image.mimeType, image: image.bytes.toString('base64') },
+      timeout: 90_000,
+    }),
     webhook: (url: string, headers: Record<string, string>) => client(`${session}/webhook`, { method: 'PUT', body: { url, headers } }),
   }
 }

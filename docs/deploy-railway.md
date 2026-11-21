@@ -67,6 +67,9 @@ propagates instead of drifting out of sync.
 SERVER_PORT=8080
 SERVER_URL=https://<evolution-domain>
 AUTHENTICATION_API_KEY=<openssl rand -hex 16>
+AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+DEL_INSTANCE=false
+QRCODE_LIMIT=30
 DATABASE_PROVIDER=postgresql
 DATABASE_CONNECTION_URI=${{Postgres.DATABASE_URL}}?schema=public
 DATABASE_CONNECTION_CLIENT_NAME=evolution_exchange
@@ -79,6 +82,7 @@ DATABASE_SAVE_DATA_HISTORIC=true
 CACHE_REDIS_ENABLED=true
 CACHE_REDIS_URI=${{Redis.REDIS_URL}}/6
 CACHE_REDIS_PREFIX_KEY=evolution
+CACHE_REDIS_SAVE_INSTANCES=false
 CACHE_LOCAL_ENABLED=false
 WEBHOOK_GLOBAL_ENABLED=false
 TELEMETRY_ENABLED=false
@@ -244,8 +248,8 @@ To undo one, run `ALTER SYSTEM RESET <name>;` and restart.
 - **`effective_cache_size` 6 GB** is a hint to the planner and allocates
   nothing.
 - **`max_connections` 150, not 100.** Count the connection budget before you
-  lower it or add a pool. Each process's pool ceiling: web 18 (app 10, Evolution
-  reads 3 + 2, Telegram reads 3), Telegram bridge 11 (10 + 1 for its lock
+  lower it or add a pool. Each process's pool ceiling: web 19 (app 10, Evolution
+  reads 3 + 2 + 1 for background counts, Telegram reads 3), Telegram bridge 11 (10 + 1 for its lock
   connection), cloud 5. Evolution sets no `connection_limit`, so Prisma uses its
   default of `2 × vCPU + 1`. Add each Postgres connection pointed at this
   database (up to 3 each), double the ceiling of whichever service is mid-deploy,

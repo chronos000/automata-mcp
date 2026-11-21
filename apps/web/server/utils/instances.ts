@@ -667,7 +667,7 @@ export async function getImapHealth(instance: AppInstance): Promise<ConnectionHe
  * dropped session from an account with no session at all. A fresh instance and
  * a logout both leave the column `close`, and a QR on screen leaves it
  * `connecting`; on stock 2.3.7 only a retried close leaves it `open` with
- * nothing live behind it. The fork (ju-li/evolution-api-v2) writes `connecting`
+ * nothing live behind it. The fork (evolution-api-reforged) writes `connecting`
  * for a retried close instead, and records why — `isSessionLost` reads both.
  *
  * **Where the row and the counts come from — and why not `fetchInstances`.**
@@ -1083,7 +1083,7 @@ const DISCONNECTION_RECORD_SKEW_MS = 5_000
  *
  * **Why the column is not enough on the fork.** Stock 2.3.7 leaves the column
  * `open` while it retries a close, and `sessionLost` was built on exactly that
- * disagreement. The fork (ju-li/evolution-api-v2 #6, #10, #51) writes
+ * disagreement. The fork (evolution-api-reforged, formerly ju-li/evolution-api-v2 #6, #10, #51) writes
  * `connecting` with `disconnectionAt` and `disconnectionReasonCode` on every
  * close it retries, backs off to every 5 min and never gives up — so a dropped
  * session reads column `connecting`, live `connecting`, the same as a QR

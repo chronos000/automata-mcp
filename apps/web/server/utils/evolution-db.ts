@@ -316,7 +316,7 @@ export async function readInstanceRowWrittenAt(instance: AppInstance): Promise<s
  * no row or the column is NULL.
  *
  * Stock 2.3.7 writes it only on a close it will not retry (401, 403, 402, 406);
- * the fork (ju-li/evolution-api-v2) also writes it, with `connecting`, on every
+ * the fork (evolution-api-reforged) also writes it, with `connecting`, on every
  * close it retries — the one record of a dropped session there, since its
  * column no longer stays `open` over a dead socket. `sessionLost` in
  * instances.ts reads it (`recordedRetryableClose`).

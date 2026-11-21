@@ -219,7 +219,8 @@ isn't asked to add it, so it can't forget it or change the wording. The tool's
 response names the appended text in `disclaimerAppended`. On Telegram the
 disclaimer counts toward the 4096-character limit, and a message that goes over
 it is refused with the number of characters to cut. The disclaimer is per
-token, and admins can edit or remove it in the token's Edit dialog. A token that
+token, and whoever manages the connection can edit or remove it in the token's
+Edit dialog. A token that
 can't send stores none.
 
 The token is shown exactly once — only its SHA-256 hash is stored. Lost tokens
@@ -232,8 +233,8 @@ starts, for example `claude-ai 0.1.0 · Cursor 1.7`. Click the line for each
 client's version, protocol version, user agent, when it was first seen, its last
 session and how many sessions it has started. "Last session" is when a client
 last connected; **Last used** is still the last tool call. The newest 20 clients
-are kept per token. A member sees this for their own tokens, an admin for all of
-them.
+are kept per token. A member sees this for their own tokens; whoever manages the
+connection (an admin, or the member who created it) for all of them.
 
 A client whose name first appears more than a day after the token's first client
 gets a **New client** label for two weeks. If you don't recognise it, issue the

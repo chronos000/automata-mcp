@@ -91,3 +91,22 @@ export function textMatchesAll(
 
 /** Three letters or digits in a row: a term `pg_trgm` takes at least one trigram from. */
 export const TRIGRAM_RUN = /[\p{L}\p{N}]{3}/u
+
+/**
+ * Where an account-wide count of search matches stops: the dashboard's message
+ * table shows "10,000+" past it. Exact below it, so a narrow search reads as an
+ * answer; capped above it, so a common word costs at most this many rows read
+ * rather than every matching row in a multi-million-message account — which ran
+ * past the statement timeout on a cold cache in production. Counted as
+ * `count(*)` over a `LIMIT cap + 1` subquery, never over the whole match set.
+ */
+export const MATCH_COUNT_CAP = 10_000
+
+/**
+ * The capped count's own statement timeout. It runs only after its page, and
+ * only when the page did not already reach the end; on a common word it costs
+ * what the page's search did, so a short bound turns a slow count into "not
+ * measured" rather than doubling a slow search on the slot the account shares.
+ * Applied with `SET LOCAL` inside the count's own read-only transaction.
+ */
+export const MATCH_COUNT_TIMEOUT_MS = 3_000

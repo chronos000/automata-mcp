@@ -819,15 +819,14 @@ export interface MessagePageOptions {
    * under a LID and a phone number (`whatsapp-identity.ts`), already cut to the
    * token's scope. A predicate in the SQL, never a filter over rows read.
    *
-   * Absent means the whole account, which exists for the **session** surface —
-   * the dashboard's message table — and is unreachable from MCP: every tool goes
-   * through `listMessages()` in `chats.ts`, which takes a non-empty tuple of
-   * JIDs as a required positional argument, so no tool can widen to every chat
-   * by omitting a field. The predicate is emitted whenever this is present, so
-   * an empty array matches nothing rather than everything. `instanceId` below
-   * is unconditional either way.
+   * Required: the whole account has its own query, `listAccountMessagesPage`,
+   * which exists for the **session** surface — the dashboard's message table —
+   * and is unreachable from MCP: every tool goes through `listMessages()` in
+   * `chats.ts`, which takes a non-empty tuple of JIDs as a required positional
+   * argument. An empty array matches nothing rather than everything.
+   * `instanceId` below is unconditional either way.
    */
-  jids?: readonly string[]
+  jids: readonly string[]
   limit: number
   /** 1-based, counting back from the newest. */
   page: number
@@ -926,7 +925,7 @@ export async function listMessagesPage(
                ${bestNamed(sql)} AS named, m.id AS "rowId"
         FROM "Message" m
         WHERE m."instanceId" = ${instanceId}
-          ${options.jids === undefined ? sql`` : sql`AND m.key->>'remoteJid' = ANY(${[...options.jids]}::text[])`}
+          AND m.key->>'remoteJid' = ANY(${[...options.jids]}::text[])
           ${terms === undefined ? sql`` : bodyMatchesAll(sql, terms)}
           ${since === undefined ? sql`` : sql`AND m."messageTimestamp" >= ${since}`}
           ${until === undefined ? sql`` : sql`AND m."messageTimestamp" <= ${until}`}
@@ -954,6 +953,129 @@ export async function listMessagesPage(
     records: rows.slice(0, options.limit).map(({ total: _total, ...record }) => record),
     hasMore: rows.length > options.limit,
     total: Number.isFinite(total) ? total : undefined,
+  }
+}
+
+export interface AccountMessagePageOptions {
+  limit: number
+  /** 1-based, counting back from the newest (or forward from the oldest). */
+  page: number
+  /** Every term must appear in the body — `bodyMatchesAll`, as `searchMessages`. */
+  terms?: string[]
+  includeReactions?: boolean
+  order?: 'newest' | 'oldest'
+}
+
+/**
+ * One page of **every** chat on the account — the dashboard's message table —
+ * built so its cost is the page, not the account (the chat-scoped
+ * `listMessagesPage` reads a chat's whole window to dedupe and count it, which
+ * across a 2M-message account is every row on every page).
+ *
+ * Two differences from the chat read, both deliberate:
+ *
+ * - **Duplicates collapse in time order.** `DISTINCT ON ("messageTimestamp",
+ *   key->>'id')` matches the leading `ORDER BY`, so `message_instance_ts_idx`
+ *   streams rows newest first (incremental sort on the rest) and the `LIMIT`
+ *   stops it — verified on production: page 6 of a 200k-message account in
+ *   ~0.2 s. It relies on copies of one message sharing `messageTimestamp`,
+ *   which is WhatsApp's own timestamp carried in the payload, not insert time.
+ *   Production holds no duplicates left to measure against (the fork's unique
+ *   index removed them); a stock server whose copies disagreed would show such
+ *   a message twice on this table. Display only — MCP never reads through here,
+ *   and the chat read keeps its full dedupe.
+ * - **No exact total.** `COUNT(*) OVER ()` would read the whole window again.
+ *   Without terms there is no total here at all: the dashboard already shows the
+ *   account's cached message count beside this table, and labels it as
+ *   approximate — unless the page reached the end, which knows its total for
+ *   free. With terms and more pages, `total` is a capped count
+ *   (`MATCH_COUNT_CAP`) under its own short timeout (`MATCH_COUNT_TIMEOUT_MS`),
+ *   run after the page: exact below the cap, `totalAtLeast: true` at it. A count
+ *   that fails or times out leaves `total` absent — "not measured" — and never
+ *   fails the page.
+ *
+ * `hasMore` still comes from fetching one row more than the page, as everywhere.
+ */
+export async function listAccountMessagesPage(
+  instance: AppInstance,
+  options: AccountMessagePageOptions,
+): Promise<{ records: MessageRecord[], hasMore: boolean, total?: number, totalAtLeast?: boolean }> {
+  if (options.terms) assertSearchTerms(options.terms)
+  const { query } = await evolutionDbFor(instance)
+  const instanceId = await resolveEvolutionInstanceId(instance)
+
+  const take = options.limit + 1
+  const skip = (options.page - 1) * options.limit
+  const terms = options.terms?.length ? options.terms : undefined
+
+  const filters = (sql: Sql) => sql`
+    ${terms === undefined ? sql`` : bodyMatchesAll(sql, terms)}
+    ${options.includeReactions ? sql`` : sql`AND m.message->'reactionMessage' IS NULL`}`
+
+  // The DISTINCT ON keys lead the ORDER BY in the same order; directions may
+  // differ, and the tiebreaker travels with the direction.
+  const ordering = (sql: Sql) => options.order === 'oldest'
+    ? sql`m."messageTimestamp" ASC, m.key->>'id' ASC`
+    : sql`m."messageTimestamp" DESC, m.key->>'id' DESC`
+
+  let rows: MessageRecord[]
+  try {
+    rows = await query(sql => sql<MessageRecord[]>`
+      SELECT DISTINCT ON (m."messageTimestamp", m.key->>'id')
+             m.key, m."pushName", m."messageType", m."messageTimestamp", m.message,
+             m."contextInfo"->'mentionedJid' AS mentioned
+      FROM "Message" m
+      WHERE m."instanceId" = ${instanceId}
+        ${filters(sql)}
+      ORDER BY ${ordering(sql)}, ${bestNamed(sql)} DESC, m.id
+      LIMIT ${take} OFFSET ${skip}
+    `)
+  }
+  catch (error) {
+    throw readFailure('[read]', 'Reading messages is temporarily unavailable', error)
+  }
+  const hasMore = rows.length > options.limit
+  const records = rows.slice(0, options.limit)
+
+  // The last page knows the total already. Otherwise only a search is counted,
+  // capped and briefly (`MATCH_COUNT_TIMEOUT_MS`): distinct keys among at most
+  // cap + 1 matching rows.
+  let total: number | undefined
+  let atLeast = false
+  if (!hasMore && (records.length > 0 || options.page === 1)) {
+    total = skip + records.length
+  }
+  else if (hasMore && terms !== undefined) {
+    try {
+      const [row] = await query(sql => sql.begin('read only', async (tx) => {
+        const matching = filters(sql)
+        await tx`SELECT set_config('statement_timeout', ${String(MATCH_COUNT_TIMEOUT_MS)}, true)`
+        return await tx<Array<{ n: number, rows: number }>>`
+          SELECT count(DISTINCT k)::int AS n, count(*)::int AS rows FROM (
+            SELECT m.key->>'id' AS k
+            FROM "Message" m
+            WHERE m."instanceId" = ${instanceId}
+              ${matching}
+            LIMIT ${MATCH_COUNT_CAP + 1}
+          ) matched`
+      }))
+      if (row) {
+        atLeast = row.rows > MATCH_COUNT_CAP
+        total = atLeast ? MATCH_COUNT_CAP : row.n
+      }
+    }
+    catch (error) {
+      // A missing count is "not measured" in the table, never a failed page.
+      // Logged, since a handled miss is otherwise invisible.
+      console.error(`[read] account message count for connection ${instance.id} skipped: ${(error as Error).message}`)
+    }
+  }
+
+  return {
+    records,
+    hasMore,
+    ...(total !== undefined && { total }),
+    ...(atLeast && { totalAtLeast: true }),
   }
 }
 

@@ -813,7 +813,13 @@ Evolution writes on every open — marks it **Stuck** on the dashboard, and
 the operator is mailed straight away; after two hours (longer than the usual
 ten minutes, since a stuck socket is inferred rather than read), everyone who
 can reach the connection is emailed that the service needs
-restarting (see [alerts.md](alerts.md)). The record clears when WhatsApp next
+restarting (see [alerts.md](alerts.md)). The operator mail says which evidence
+it was. A `Connection Closed` is proof, and the fix is the restart. Unacknowledged
+sends are an inference: an Evolution server that drops or delays receipts
+(the fork before 3.3.0, stock 2.3.7) produces the same reading on a healthy
+account. So that mail asks you to check the server version and the sends'
+`"Message"` / `"MessageUpdate"` rows before restarting every account on it.
+The record clears when WhatsApp next
 acknowledges a send (a receipt past `PENDING`) or answers a group lookup
 (even with a refusal), when a message is received after it, when Evolution reopens
 the socket, or when the account is next read as not `open`.

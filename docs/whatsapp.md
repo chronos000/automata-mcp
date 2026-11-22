@@ -2,7 +2,7 @@
 
 ## Which Evolution
 
-The deployment's own Evolution server runs **`evolution-api-reforged` 3.2.0**,
+The deployment's own Evolution server runs **`evolution-api-reforged` 3.3.0**,
 our fork of Evolution API
 ([repo](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged),
 formerly `ju-li/evolution-api-v2`). Every file that names it pins its digest:
@@ -68,6 +68,45 @@ What the fork changes, and why we run it:
     **Import full history** on the dashboard, then a QR scan.
   - **Each history batch is logged at INFO:** `history batch: …` when it arrives
     and `history batch stored: …` once it is written.
+- **Sent messages keep their receipts** (3.3.0,
+  [#67](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged/issues/67)).
+  - **What went wrong:** WhatsApp's acknowledgement of a message sent through
+    the API could arrive before Evolution had stored the message. It was then
+    thrown away, and the message read `PENDING` until a later receipt arrived,
+    which can be minutes or a day. The stored status of a sent message was also
+    never updated.
+  - **What changed:** an early acknowledgement is kept and applied once the
+    message is stored, and a sent message's status now follows its receipts
+    (`SERVER_ACK`, `DELIVERY_ACK`, `READ`), never backwards.
+  - **Why it matters here:** the app reads that status two minutes after each
+    send to tell a working connection from a stuck one. Before 3.3.0 a healthy
+    account could be reported as [stuck](#stuck-with-the-socket-dead).
+- **Evolution reports each connection's health** (3.3.0,
+  [#68](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged/issues/68)).
+  `GET /instance/connectionState` answers a `health` object: when the socket
+  last heard from WhatsApp, reconnects and conflicts in the last ten minutes,
+  the last message received, sends not yet acknowledged, and a verdict (`ok`,
+  `reconnecting`, `looping`, `stalled` or `closed`) with its reasons. It is
+  kept in memory and starts empty when Evolution starts. The app does not read
+  it yet; [#306](https://github.com/ju-li/automata-mcp/issues/306) tracks that.
+- **A socket that stops working can be rebuilt on its own** (3.3.0,
+  [#69](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged/issues/69)).
+  - **When:** a connection reads `open` but its websocket is closed, or nothing
+    has arrived from WhatsApp for a minute.
+  - **What it does:** opens a new socket for that one connection on its stored
+    session. No QR scan, and no other connection is touched. It backs off
+    between tries and stops after five that did not help.
+  - **It only logs by default** (`WATCHDOG_MODE=report`): each rebuild it would
+    do is one `Watchdog (report mode)` line, and nothing changes. To let it act,
+    add `WATCHDOG_MODE: on` to the `evolution` service's environment. Read a
+    week of those log lines first.
+- **Large history batches survive a restart** (3.3.0,
+  [#74](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged/issues/74)).
+  A history batch over `EVENT_QUEUE_MAX_ENTRY_BYTES` (8 MiB) used to be
+  processed without being written to Redis, so a restart during an import lost
+  it, and WhatsApp does not send history twice. Such a batch is now split into
+  parts under the limit, each stored and processed on its own; its
+  `history batch:` log line shows `part=from-to/total`.
 
 ### Moving from stock Evolution 2.3.7
 
@@ -853,7 +892,7 @@ re-import can write a second copy of a message Evolution already holds (see
 [Reading and searching messages](#reading-and-searching-messages)), but reads and
 searches collapse copies by `key.id`, so each message is still reported once.
 
-Watch it land with `pnpm services:logs` while scanning. The fork (3.2.0) logs
+Watch it land with `pnpm services:logs` while scanning. The fork (since 3.2.0) logs
 each batch at INFO, with its date range and what was stored:
 
 ```

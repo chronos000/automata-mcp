@@ -1763,8 +1763,50 @@ async function liveConnection(
   const response = await evolution<{ instance?: { state?: string, health?: unknown } }>(
     `/instance/connectionState/${encodeURIComponent(instance.name)}`,
   )
-  const health = parseEvolutionHealth(response?.instance?.health)
-  return { state: normalizeState(response?.instance?.state), ...(health && { health }) }
+  const state = normalizeState(response?.instance?.state)
+  const raw = response?.instance?.health
+  const health = parseEvolutionHealth(raw)
+  noteHealthCapability(instance, state, raw, health)
+  return { state, ...(health && { health }) }
+}
+
+/** Per Evolution server (keyed on its URL, never logged): which capability line this process already logged. */
+const healthCapabilityLogged = new Map<string, 'read' | 'absent' | 'unreadable'>()
+
+/**
+ * Say once per process and Evolution server whether its `health` report is
+ * being read (#306). The comparison logs only disagreements, so without this
+ * "no `[evolution-health]` lines" could mean agreement or a report never read.
+ * Logged again only when the answer changes — a rollback, or the upgrade.
+ *
+ * An instance Evolution has not loaded answers with no state and no report on
+ * any version, so only an answer with a known state counts as "absent". The
+ * server is named by whether it is the deployment's own and by one connection
+ * id — never by its URL, which a bring-your-own server's owner typed.
+ */
+function noteHealthCapability(
+  instance: AppInstance,
+  state: ConnectionState,
+  raw: unknown,
+  health: EvolutionHealth | undefined,
+): void {
+  const outcome = health ? 'read' : raw !== undefined ? 'unreadable' : state === 'unknown' ? undefined : 'absent'
+  if (!outcome) return
+  const key = instance.base_url ?? ''
+  if (healthCapabilityLogged.get(key) === outcome) return
+  rememberBounded(healthCapabilityLogged, key, outcome, MAX_COUNTS_ENTRIES)
+
+  const server = onDeploymentServer(instance) ? 'the deployment\'s Evolution' : `the Evolution server of connection ${instance.id}`
+  if (health) {
+    console.info(`[evolution-health] reading ${server}'s health report (version ${health.version}); `
+      + `${evolutionHealthMode() === 'use' ? 'it decides' : 'comparing only, the app\'s signals decide'}`)
+  }
+  else if (outcome === 'unreadable') {
+    console.warn(`[evolution-health] ${server} answered a health report this build cannot read; the app's own signals decide`)
+  }
+  else {
+    console.info(`[evolution-health] ${server} reports no health (older than evolution-api-reforged 3.3.0); the app's own signals decide`)
+  }
 }
 
 /**

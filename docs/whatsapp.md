@@ -861,6 +861,11 @@ no extra cost, and maps it like this:
   `lastInboundAt`; the app's signals are still computed and compared. Grace
   periods, recipients and mails are unchanged.
 
+To confirm the comparison is running, look for the line each web process
+logs once per Evolution server, at its first status read:
+`[evolution-health] reading the deployment's Evolution's health report (version 2); comparing only, the app's signals decide`.
+A server without a report logs `… reports no health …` instead.
+
 A server without the report (stock 2.3.7, the fork before 3.3.0, a rollback)
 always keeps the app's own signals, whatever the setting. So does a report the
 app cannot read. Evolution not answering at all is `unknown`, as before.

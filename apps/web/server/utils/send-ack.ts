@@ -160,7 +160,7 @@ async function checkSendAck(instance: AppInstance, sent: SentMessageRef, sentAt:
     console.info(`[socket] connection ${instance.id}: a send is still PENDING ${ACK_CHECK_DELAY_MS / 1000} s on (${misses} in a row)`)
     return
   }
-  noteSocketDead(instance, `send left unacknowledged (${misses} in a row)`, sentAt)
+  noteSocketDead(instance, 'unacked_sends', `send left unacknowledged (${misses} in a row)`, sentAt)
 }
 
 /**

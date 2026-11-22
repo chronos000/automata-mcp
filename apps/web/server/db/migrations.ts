@@ -954,4 +954,19 @@ export const APP_MIGRATIONS: AppMigration[] = [
         ADD COLUMN onboarding_for text REFERENCES app.users(id) ON DELETE SET NULL;
     `,
   },
+  {
+    name: '0030_instance_socket_dead_by',
+    sql: /* sql */ `
+      -- What found the socket dead, beside socket_dead_seen_at (#305):
+      -- 'socket_error' = a send or group lookup Evolution answered with
+      -- Baileys' dead-socket error ("Connection Closed"); 'unacked_sends' =
+      -- sends WhatsApp never acknowledged (send-ack.ts), an inference that a
+      -- server dropping receipts also produces. Decides the operator mail's
+      -- wording only, never whether the account is stalled. Written and
+      -- cleared with socket_dead_seen_at by socket-evidence.ts. NULL for rows
+      -- recorded before this column: the kind is not known.
+      ALTER TABLE app.instances
+        ADD COLUMN socket_dead_by text CHECK (socket_dead_by IN ('socket_error', 'unacked_sends'));
+    `,
+  },
 ]

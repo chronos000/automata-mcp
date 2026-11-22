@@ -87,8 +87,9 @@ What the fork changes, and why we run it:
   last heard from WhatsApp, reconnects and conflicts in the last ten minutes,
   the last message received, sends not yet acknowledged, and a verdict (`ok`,
   `reconnecting`, `looping`, `stalled` or `closed`) with its reasons. It is
-  kept in memory and starts empty when Evolution starts. The app does not read
-  it yet; [#306](https://github.com/ju-li/automata-mcp/issues/306) tracks that.
+  kept in memory and starts empty when Evolution starts. The app reads it and,
+  by default, only compares it with its own signals; see
+  [Evolution's own health report](#evolutions-own-health-report).
 - **A socket that stops working can be rebuilt on its own** (3.3.0,
   [#69](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged/issues/69)).
   - **When:** a connection reads `open` but its websocket is closed, or nothing
@@ -831,6 +832,38 @@ failed calls alone, for 30 minutes after the last one. `Timed Out` is not
 counted, since a healthy socket can answer it too. A webhook delivery never
 records anything (deliveries are unsigned). And it is found only by a call that
 needs the socket: an account nobody sends from waits for its next group lookup.
+
+## Evolution's own health report
+
+The two sections above describe how the app infers a loop and a stuck socket
+from outside Evolution. From 3.3.0 the fork reports both itself: every
+`connectionState` answer, which the app already reads for the live state,
+carries a `health` object with a verdict (`ok`, `reconnecting`, `looping`,
+`stalled`, `closed`) and its reasons. The app reads it on every status read, at
+no extra cost, and maps it like this:
+
+| The app reports | Evolution's report |
+|---|---|
+| `flapping` (Reconnecting over and over) | verdict `looping`: three drops of an open socket, or two `conflict: replaced`, in ten minutes |
+| `stalled` (Stuck) | verdict `stalled`: the state reads `open`, and the websocket is closed, nothing has arrived for two keep-alive intervals, the event queue is stuck, or a send to a person went unacknowledged with nothing received since |
+| `lastInboundAt` | `inbound.lastMessageAt`: when Evolution received the last message, while it has one (empty after an Evolution restart until something arrives) |
+
+`NUXT_EVOLUTION_HEALTH` says which one decides:
+
+- **`compare` (the default).** The app's own signals decide, as before, and
+  every disagreement with Evolution's report is logged once when it starts,
+  changes and ends, by connection id:
+  `[evolution-health] connection <id>: stalled app=false evolution=true (verdict stalled, reasons keepalive_silent, …); the app's signals decide`.
+  A `sessionLost` line compares the app's dropped-session reading with
+  Evolution retrying a close; the report cannot say whether the phone is still
+  linked (an unscanned QR retries too), so that one is never taken from it.
+- **`use`.** Evolution's report decides `flapping`, `stalled` and
+  `lastInboundAt`; the app's signals are still computed and compared. Grace
+  periods, recipients and mails are unchanged.
+
+A server without the report (stock 2.3.7, the fork before 3.3.0, a rollback)
+always keeps the app's own signals, whatever the setting. So does a report the
+app cannot read. Evolution not answering at all is `unknown`, as before.
 
 ## Connections never paired are removed after an hour
 

@@ -1,4 +1,5 @@
 import type { ImapFlow, FetchMessageObject, ListResponse, MessageAddressObject } from 'imapflow'
+import type { Sql } from 'postgres'
 import type { AppInstance } from './app-db'
 import type { ImapTarget } from './imap-client'
 
@@ -72,6 +73,15 @@ const SKIPPED_SPECIAL_USE = new Set(['\\All', '\\Junk', '\\Trash'])
 export interface MailSyncLimits {
   days: number
   max: number
+}
+
+/**
+ * The `SET` columns for credentials that just logged in: any refusal streak
+ * and retry wait cleared, and `login_ok_at` marking them as having worked —
+ * which is what earns a later refusal the retry schedule rather than a stop.
+ */
+export function loginWorked(sql: Sql) {
+  return sql`auth_failed = false, auth_failures = 0, auth_retry_at = NULL, login_ok_at = now()`
 }
 
 export function mailSyncLimits(): MailSyncLimits {
@@ -183,15 +193,13 @@ async function runClaimed(instance: AppInstance, lease: Lease): Promise<SyncOutc
       // progress is kept in their own rows.
       await sql`
         UPDATE app.mail_sync_state
-        SET last_error_code = ${folderFailed}, last_error_at = now(), lease_until = now(),
-            auth_failed = false, auth_failures = 0, auth_retry_at = NULL, login_ok_at = now()
+        SET last_error_code = ${folderFailed}, last_error_at = now(), lease_until = now(), ${loginWorked(sql)}
         WHERE instance_id = ${instance.id}`
       return 'failed'
     }
     await sql`
       UPDATE app.mail_sync_state
-      SET last_success_at = now(), last_error_code = NULL, lease_until = now(),
-          auth_failed = false, auth_failures = 0, auth_retry_at = NULL, login_ok_at = now()
+      SET last_success_at = now(), last_error_code = NULL, lease_until = now(), ${loginWorked(sql)}
       WHERE instance_id = ${instance.id}`
     return 'synced'
   }

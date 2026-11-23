@@ -1,4 +1,4 @@
-import type { PendingQuery, Row, Sql } from 'postgres'
+import type { PendingQuery, Row, Sql, TransactionSql } from 'postgres'
 import { escapeLike } from './sql-text'
 
 /**
@@ -110,3 +110,36 @@ export const MATCH_COUNT_CAP = 10_000
  * Applied with `SET LOCAL` inside the count's own read-only transaction.
  */
 export const MATCH_COUNT_TIMEOUT_MS = 3_000
+
+/**
+ * The total an account-wide message page can report cheaply. The last page
+ * knows it for free (offset + rows). Before it, only a search is counted: after
+ * the page, capped at `MATCH_COUNT_CAP`, in its own read-only transaction under
+ * `MATCH_COUNT_TIMEOUT_MS`. `count` answers `n` matches among at most `limit`
+ * rows read (`rows`; omit it when every row is a match). A failed count is
+ * "not measured" — logged, since a handled miss is otherwise invisible — never
+ * a failed page.
+ */
+export async function pageTotal(
+  page: { page: number, skip: number, length: number, hasMore: boolean, searching: boolean },
+  query: <T>(build: (sql: Sql) => Promise<T>) => Promise<T>,
+  count: (tx: TransactionSql, sql: Sql, limit: number) => Promise<Array<{ n: number, rows?: number }>>,
+  what: string,
+): Promise<{ total?: number, totalAtLeast?: true }> {
+  if (!page.hasMore) {
+    return page.length > 0 || page.page === 1 ? { total: page.skip + page.length } : {}
+  }
+  if (!page.searching) return {}
+  try {
+    const [row] = await query(sql => sql.begin('read only', async (tx) => {
+      await tx`SELECT set_config('statement_timeout', ${String(MATCH_COUNT_TIMEOUT_MS)}, true)`
+      return await count(tx, sql, MATCH_COUNT_CAP + 1)
+    }))
+    if (!row) return {}
+    return (row.rows ?? row.n) > MATCH_COUNT_CAP ? { total: MATCH_COUNT_CAP, totalAtLeast: true } : { total: row.n }
+  }
+  catch (error) {
+    console.error(`${what} skipped: ${(error as Error).message}`)
+    return {}
+  }
+}

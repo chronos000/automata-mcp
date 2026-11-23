@@ -50,7 +50,7 @@ export default defineKindTool({
       throw createError({ statusCode: 400, message: 'Pass exactly one of `chatId` or `username`.' })
     }
 
-    const text = caption?.trim() ? withSendDisclaimer(caption, sendDisclaimer) : (sendDisclaimer ?? '')
+    const text = captionWithDisclaimer(caption, sendDisclaimer) ?? ''
     if (text.length > TELEGRAM_MAX_CAPTION) {
       throw createError({
         statusCode: 400,
@@ -61,22 +61,8 @@ export default defineKindTool({
     }
 
     const bridge = useTelegramBridge()
-
-    let target: string
-    if (chatId) {
-      target = chatId
-    }
-    else {
-      try {
-        target = (await bridge.resolve(username!)).chatId
-      }
-      catch (error) {
-        relayBridgeError(error, 'look up that recipient, so the image was not sent')
-      }
-    }
-
     // Before the download: a refused recipient costs no fetch.
-    assertChatAllowed(scope, target)
+    const target = await resolveTelegramSendTarget(bridge, scope, { chatId, username }, 'image')
 
     const image = await loadSendImage({ imageUrl, imageBase64 })
 

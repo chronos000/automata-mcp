@@ -618,7 +618,7 @@ export class SessionManager {
    * out exactly as written, not reinterpreted as Markdown.
    */
   async send(id: string, chatId: string, text: string): Promise<{ chatId: string, messageId: number, date: string }> {
-    return this.sendTo(id, chatId, client => peer => client.sendMessage(peer, { message: text, parseMode: false }))
+    return this.sendTo(id, chatId, (client, peer) => client.sendMessage(peer, { message: text, parseMode: false }))
   }
 
   /**
@@ -635,7 +635,7 @@ export class SessionManager {
     caption: string,
   ): Promise<{ chatId: string, messageId: number, date: string }> {
     const name = mimeType === 'image/png' ? 'image.png' : 'image.jpg'
-    return this.sendTo(id, chatId, client => peer => client.sendFile(peer, {
+    return this.sendTo(id, chatId, (client, peer) => client.sendFile(peer, {
       file: new teleproto.uploads.CustomFile(name, image.length, '', image),
       caption,
       parseMode: false,
@@ -647,7 +647,7 @@ export class SessionManager {
   private async sendTo(
     id: string,
     chatId: string,
-    sendWith: (client: TelegramClient) => (peer: Api.TypeInputPeer) => Promise<Api.Message>,
+    sendWith: (client: TelegramClient, peer: Api.TypeInputPeer) => Promise<Api.Message>,
   ): Promise<{ chatId: string, messageId: number, date: string }> {
     await this.row(id)
     const rt = this.runtime(id)
@@ -666,7 +666,7 @@ export class SessionManager {
 
     let message: Api.Message
     try {
-      message = await sendWith(client)(peer)
+      message = await sendWith(client, peer)
     }
     catch (error) {
       throw toHttpError(error)

@@ -169,7 +169,8 @@ async function knownLids(instance: AppInstance): Promise<Known | undefined> {
     if (!isFresh(entry)) void scheduleBuild(instance)
     return entry
   }
-  await settledWithin(scheduleBuild(instance), FIRST_BUILD_WAIT_MS)
+  // Never rejects: scheduleBuild doesn't, and a missed wait just means the set isn't ready yet.
+  await withDeadline(scheduleBuild(instance), FIRST_BUILD_WAIT_MS, `known LIDs for connection ${instance.id}`).catch(() => {})
   return known.get(instance.id)
 }
 
@@ -193,15 +194,6 @@ function adopt(instanceId: string, stored: StoredKnown | undefined): Known | und
   return entry
 }
 
-/** Resolves once `work` settles or `ms` pass, whichever is first; never rejects. */
-async function settledWithin(work: Promise<unknown>, ms: number): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const elapsed = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, ms)
-  })
-  await Promise.race([work.catch(() => {}), elapsed]).finally(() => clearTimeout(timer))
-}
-
 // ── background builds (#319) ───────────────────────────────────────────────
 // One at a time per process, oldest request first, like `countInBackground` in
 // instances.ts: a cold read of a large account is I/O-bound, and two side by
@@ -218,8 +210,8 @@ interface Queued {
 
 const queue = new Map<string, Queued>()
 const failedAt = new Map<string, number>()
+/** Set from the first build to the last with no await in between, so it doubles as "draining". */
 let running: { id: string, done: Promise<void>, forgotten: boolean } | undefined
-let draining = false
 
 /** Queue a build for this connection; resolves when it has finished, either way. */
 function scheduleBuild(instance: AppInstance): Promise<void> {
@@ -234,40 +226,34 @@ function scheduleBuild(instance: AppInstance): Promise<void> {
     settle = resolve
   })
   queue.set(instance.id, { instance, done, settle })
-  if (!draining) drainBuilds().catch(error => console.error('[lid-guard] background builds stopped:', error))
+  if (!running) drainBuilds().catch(error => console.error('[lid-guard] background builds stopped:', error))
   return done
 }
 
 async function drainBuilds(): Promise<void> {
-  draining = true
-  try {
-    for (;;) {
-      const next = queue.entries().next()
-      if (next.done) break
-      const [id, { instance, done, settle }] = next.value
-      queue.delete(id)
-      const current = { id, done, forgotten: false }
-      running = current
-      try {
-        await build(instance, current)
-        failedAt.delete(id)
-      }
-      catch (error) {
-        if (!current.forgotten) rememberBounded(failedAt, id, Date.now(), MAX_ENTRIES)
-        console.error(
-          `[lid-guard] could not read known LIDs for connection ${id}; sends rely on the stored set, if any, `
-          + `and the recent check, retrying in ${RETRY_MS / 60_000} minutes:`,
-          error,
-        )
-      }
-      finally {
-        running = undefined
-        settle()
-      }
+  for (;;) {
+    const next = queue.entries().next()
+    if (next.done) break
+    const [id, { instance, done, settle }] = next.value
+    queue.delete(id)
+    const current = { id, done, forgotten: false }
+    running = current
+    try {
+      await build(instance, current)
+      failedAt.delete(id)
     }
-  }
-  finally {
-    draining = false
+    catch (error) {
+      if (!current.forgotten) rememberBounded(failedAt, id, Date.now(), MAX_ENTRIES)
+      console.error(
+        `[lid-guard] could not read known LIDs for connection ${id}; sends rely on the stored set, if any, `
+        + `and the recent check, retrying in ${RETRY_MS / 60_000} minutes:`,
+        error,
+      )
+    }
+    finally {
+      running = undefined
+      settle()
+    }
   }
 }
 
@@ -295,7 +281,7 @@ async function build(instance: AppInstance, current: { forgotten: boolean }): Pr
   const latest = known.get(instance.id)
   const lids = new Set(read)
   for (const lid of entry?.lids ?? []) lids.add(lid)
-  for (const lid of latest?.lids ?? []) lids.add(lid)
+  if (latest !== entry) for (const lid of latest?.lids ?? []) lids.add(lid)
   const built = { lids, coveredTo: Math.max(startedAt, latest?.coveredTo ?? 0) }
 
   rememberBounded(known, instance.id, built, MAX_ENTRIES)

@@ -86,16 +86,16 @@ function decodeBase64Image(raw: string): Buffer {
   }
   // Checked on the length before decoding, so an oversized argument costs no buffer.
   if (Math.floor(body.length * 3 / 4) > MAX_SEND_IMAGE_BYTES + 2) {
-    refuse(`The image is larger than ${formatMb(MAX_SEND_IMAGE_BYTES)}.`)
+    refuse(`The image is larger than ${formatBytes(MAX_SEND_IMAGE_BYTES)}.`)
   }
   const bytes = Buffer.from(body, body.includes('-') || body.includes('_') ? 'base64url' : 'base64')
   if (bytes.length === 0) refuse('`imageBase64` decodes to nothing.')
-  if (bytes.length > MAX_SEND_IMAGE_BYTES) refuse(`The image is larger than ${formatMb(MAX_SEND_IMAGE_BYTES)}.`)
+  if (bytes.length > MAX_SEND_IMAGE_BYTES) refuse(`The image is larger than ${formatBytes(MAX_SEND_IMAGE_BYTES)}.`)
   return bytes
 }
 
 /** First bytes → type. Anything but JPEG or PNG is refused, named where we can name it. */
-export function sniffImage(bytes: Buffer): SendImage {
+function sniffImage(bytes: Buffer): SendImage {
   if (bytes.length >= 3 && bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
     return { bytes, mimeType: 'image/jpeg', extension: 'jpg' }
   }
@@ -182,7 +182,7 @@ async function readCapped(response: IncomingMessage, signal: AbortSignal): Promi
   const declared = Number(response.headers['content-length'])
   if (Number.isFinite(declared) && declared > MAX_SEND_IMAGE_BYTES) {
     response.destroy()
-    refuse(`The image is ${formatMb(declared)}, over the ${formatMb(MAX_SEND_IMAGE_BYTES)} limit.`)
+    refuse(`The image is ${formatBytes(declared)}, over the ${formatBytes(MAX_SEND_IMAGE_BYTES)} limit.`)
   }
   const chunks: Buffer[] = []
   let size = 0
@@ -191,7 +191,7 @@ async function readCapped(response: IncomingMessage, signal: AbortSignal): Promi
       size += (chunk as Buffer).length
       if (size > MAX_SEND_IMAGE_BYTES) {
         response.destroy()
-        refuse(`The image is larger than ${formatMb(MAX_SEND_IMAGE_BYTES)}.`)
+        refuse(`The image is larger than ${formatBytes(MAX_SEND_IMAGE_BYTES)}.`)
       }
       chunks.push(chunk as Buffer)
     }
@@ -204,8 +204,4 @@ async function readCapped(response: IncomingMessage, signal: AbortSignal): Promi
   }
   if (size === 0) refuse('The image URL answered with an empty body.')
   return Buffer.concat(chunks, size)
-}
-
-function formatMb(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, '')} MB`
 }

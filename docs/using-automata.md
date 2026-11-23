@@ -29,13 +29,22 @@
    expiry (30 days, 90 days — the default — 1 year, or never) and a scope.
 5. Add it to your AI assistant. The dialog shown when a token is created, and
    the **How to connect** dialog, have a tab per assistant: **Claude** (Claude.ai
-   and Desktop: Settings → Customize → Connectors → Add → Add custom connector;
-   Claude Code: `claude mcp add --transport http <name> <url>`), **Grok Bot** and
+   and Desktop: Settings → Customize → Connectors → Add → Add custom connector,
+   the `/mcp` URL, No sign-in, and an `Authorization: Bearer <token>` request
+   header, or the token URL where Request headers isn't offered yet; Claude
+   Code: `claude mcp add --transport http <name> <app-url>/mcp --header
+   "Authorization: Bearer <token>"`), **Grok Bot** and
    **Meta Muse** (asked in a chat; the token goes into their secure key prompt,
    sent as `Authorization: Bearer`), **ChatGPT** (Plugins → Add custom MCP
-   server, the token URL, No authentication), and **Other** (token URL,
-   `Authorization: Bearer` header, the MCP Inspector). The browser remembers
+   server, the token URL, No authentication), and **Other** (`Authorization:
+   Bearer` header first, then the token URL, the MCP Inspector). The browser remembers
    the last tab picked, so the next token opens on it.
+   The header is the recommended form: the token URL (`/mcp/<token>`) ends up
+   in the assistant's settings, history and logs, so it is the fallback for
+   assistants that cannot send a header — ChatGPT, and Claude.ai organizations
+   that don't have the **Request headers** section yet (it is a beta). In a
+   Claude Team or Enterprise organization, the header's token is shared by
+   every member, so all of them act as the member the token was issued to.
    **Cursor** (hosted server only): install the Automata plugin from
    [cursor.directory](https://cursor.directory), or add this repository's
    `mcp.json` entry to your own. It sends the token from the `AUTOMATA_TOKEN`

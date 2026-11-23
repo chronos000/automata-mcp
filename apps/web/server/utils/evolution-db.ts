@@ -1550,6 +1550,12 @@ export interface LidLocalPartOptions {
   since?: number
   /** Only this local part: answers with it, or with an empty set. */
   localPart?: string
+  /**
+   * Run on the background pool (`evo:…:lids`): one connection, the background
+   * count's minute-long statement timeout, never the slots readers share.
+   * For `lid-guard.ts`' set builds, which must not wait on, or hold up, a send.
+   */
+  background?: boolean
 }
 
 /**
@@ -1565,21 +1571,24 @@ export interface LidLocalPartOptions {
  * A device suffix (`79972425314508:12@lid`) is cut along with the domain, so the
  * answer is the digits a caller would see.
  *
- * Cost: one scan of the account's rows (`@@index([instanceId])` is the only
- * index). The lateral yields only short text values, so the `DISTINCT` hashes a
- * few thousand strings rather than sorting jsonb — none of `listChatActivity`'s
- * spill. `since` and `localPart` narrow what is extracted, not what is read; with
- * `localPart` the query stops at the first hit. `mentionedJid` is checked to be
+ * Cost: without `since`, one scan of the account's rows, spread through the
+ * shared table among other accounts' — 0.5 s warm, up to 9 s cold measured on a
+ * 172k-message account (#319), so never on a send's path. The lateral yields
+ * only short text values, so the `DISTINCT` hashes a few thousand strings rather
+ * than sorting jsonb — none of `listChatActivity`'s spill. With `since`,
+ * `message_instance_ts_idx` reads only the rows from then on; without that
+ * index, `since` narrows what is extracted, not what is read, and the cost is a
+ * full scan again — the answer is the same either way. With `localPart` the
+ * query stops at the first hit. `mentionedJid` is checked to be
  * an array before it is expanded, since `jsonb_array_elements_text` throws on
  * anything else and one odd row must not fail the whole read.
  *
  * Raw driver errors: the caller decides what an unreadable answer means.
  */
 export async function lidLocalParts(instance: AppInstance, options: LidLocalPartOptions = {}): Promise<Set<string>> {
-  const { query } = await evolutionDbFor(instance)
   const instanceId = await resolveEvolutionInstanceId(instance)
 
-  const rows = await query(sql => sql<Array<{ lid: string }>>`
+  const statement = (sql: Sql) => sql<Array<{ lid: string }>>`
     SELECT DISTINCT split_part(split_part(ids.jid, '@', 1), ':', 1) AS lid
     FROM "Message" m
     CROSS JOIN LATERAL (
@@ -1598,7 +1607,20 @@ export async function lidLocalParts(instance: AppInstance, options: LidLocalPart
       ${options.localPart !== undefined
         ? sql`AND split_part(split_part(ids.jid, '@', 1), ':', 1) = ${options.localPart} LIMIT 1`
         : sql``}
-  `)
+  `
+
+  let rows: Array<{ lid: string }>
+  if (options.background) {
+    const resolved = resolveMessageDb(instance)
+    // Leased, like the background count: a build that runs for seconds must not look idle to the sweep.
+    rows = await withKeyedPool(`${poolKeyFor(instance, resolved)}:lids`, resolved.url, {
+      guard: resolved.guard, max: 1, statementTimeoutMs: BACKGROUND_COUNT_TIMEOUT_MS, readOnly: true, jit: false,
+    }, statement)
+  }
+  else {
+    const { query } = await evolutionDbFor(instance)
+    rows = await query(statement)
+  }
 
   return new Set(rows.map(row => row.lid).filter(Boolean))
 }

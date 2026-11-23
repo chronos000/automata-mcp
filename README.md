@@ -306,8 +306,12 @@ built from it. See [Self-hosting](docs/self-hosting.md).
 2. On its dashboard, create a **connector token** and choose what it may reach.
 3. Add the connector URL to your AI client:
    - **Claude:** open **Settings → Customize → Connectors → Add → Add custom
-     connector** and paste the connector URL. For Claude Code:
-     `claude mcp add --transport http <name> <url>`.
+     connector**, paste the `/mcp` URL, choose **No sign-in**, and under
+     **Request headers** add `Authorization` with the value `Bearer <token>`.
+     Request headers is still rolling out; without it, paste the connector URL
+     (`/mcp/<token>`) instead. In a Team or Enterprise organization every member
+     uses that one token. For Claude Code:
+     `claude mcp add --transport http <name> <app-url>/mcp --header "Authorization: Bearer <token>"`.
    - **ChatGPT:** turn on developer mode (**Settings → Apps & Connectors →
      Advanced settings**), create a custom connector, paste the connector URL
      (the `/mcp/<token>` form, since ChatGPT cannot set a header) and choose no

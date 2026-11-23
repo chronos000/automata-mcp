@@ -380,10 +380,6 @@ export interface TelegramPageOptions {
   topicId?: number
   includeDeleted: boolean
   includeService: boolean
-  /** Every term must appear in the text. Already split, not yet escaped. */
-  terms?: string[]
-  /** Which end of the range the first page comes from. Defaults to newest first. */
-  order?: 'newest' | 'oldest'
 }
 
 interface MessageDbRow {
@@ -427,8 +423,6 @@ export async function listTelegramMessagesPage(
   const sessionId = sessionIdOf(instance)
   const since = parseDateBound(options.since, 'since')
   const until = parseDateBound(options.until, 'until')
-  // Checked again by `textMatchesAll`; here so the 400 comes before any query.
-  if (options.terms) assertSearchTerms(options.terms)
 
   // Everything that bounds the set, shared by the page and the excluded counts
   // so the two describe the same window — the scope predicates included, because
@@ -437,16 +431,9 @@ export async function listTelegramMessagesPage(
   const window = (sql: Sql) => sql`
     AND m.chat_id = ${options.chatId}
     ${options.allowedChatIds ? sql`AND m.chat_id = ANY(${options.allowedChatIds}::bigint[])` : sql``}
-    ${options.terms === undefined ? sql`` : textMatchesAll(sql, sql`m.text`, options.terms)}
     ${since ? sql`AND m.date >= ${since}` : sql``}
     ${until ? sql`AND m.date <= ${until}` : sql``}
     ${options.topicId === undefined ? sql`` : sql`AND m.topic_id = ${options.topicId}`}`
-
-  // The tiebreaker travels with the direction; reversing one half of the pair
-  // puts a row sharing a timestamp on two pages or on neither.
-  const ordering = (sql: Sql) => options.order === 'oldest'
-    ? sql`m.date ASC, m.message_id ASC`
-    : sql`m.date DESC, m.message_id DESC`
 
   const [rows, counts] = await Promise.all([
     guarded('read messages', () => query(sql => sql<Array<MessageDbRow & { total: string }>>`
@@ -464,7 +451,8 @@ export async function listTelegramMessagesPage(
         ${window(sql)}
         ${options.includeDeleted ? sql`` : sql`AND m.deleted_at IS NULL`}
         ${options.includeService ? sql`` : sql`AND m.service_action IS NULL`}
-      ORDER BY ${ordering(sql)}
+      -- The tiebreaker puts a row sharing a timestamp on exactly one page.
+      ORDER BY m.date DESC, m.message_id DESC
       LIMIT ${options.limit + 1} OFFSET ${(options.page - 1) * options.limit}`)),
     options.includeDeleted && options.includeService
       ? Promise.resolve([{ deleted: '0', service: '0' }])
@@ -546,6 +534,7 @@ export async function listTelegramAccountMessages(
     ? sql`m.date ASC, m.message_id ASC`
     : sql`m.date DESC, m.message_id DESC`
 
+  const skip = (options.page - 1) * options.limit
   const rows = await guarded('read messages', () => query(sql => sql<MessageDbRow[]>`
     SELECT m.chat_id::text AS chat_id, c.title AS chat_title,
            m.message_id::text AS message_id, m.sender_id::text AS sender_id, m.from_me, m.date, m.edit_date,
@@ -558,45 +547,22 @@ export async function listTelegramAccountMessages(
     LEFT JOIN telegram.chats sc ON sc.session_id = m.session_id AND sc.chat_id = m.sender_id AND m.sender_id < 0
     WHERE ${filters(sql)}
     ORDER BY ${ordering(sql)}
-    LIMIT ${options.limit + 1} OFFSET ${(options.page - 1) * options.limit}`))
+    LIMIT ${options.limit + 1} OFFSET ${skip}`))
 
   const hasMore = rows.length > options.limit
   const page = rows.slice(0, options.limit)
-  const skip = (options.page - 1) * options.limit
 
-  // As `listAccountMessagesPage`: the last page knows its total; otherwise only
-  // a search is counted, after the page, capped and under a short timeout.
-  let total: number | undefined
-  let atLeast = false
-  if (!hasMore && (page.length > 0 || options.page === 1)) {
-    total = skip + page.length
-  }
-  else if (hasMore && terms !== undefined) {
-    try {
-      const [row] = await query(sql => sql.begin('read only', async (tx) => {
-        const matching = filters(sql)
-        await tx`SELECT set_config('statement_timeout', ${String(MATCH_COUNT_TIMEOUT_MS)}, true)`
-        return await tx<Array<{ n: number }>>`
-          SELECT count(*)::int AS n FROM (
-            SELECT 1 FROM telegram.messages m WHERE ${matching} LIMIT ${MATCH_COUNT_CAP + 1}
-          ) matched`
-      }))
-      if (row) {
-        atLeast = row.n > MATCH_COUNT_CAP
-        total = atLeast ? MATCH_COUNT_CAP : row.n
-      }
-    }
-    catch (error) {
-      console.error(`[telegram-db] account message count for connection ${instance.id} skipped: ${(error as Error).message}`)
-    }
-  }
+  const totals = await pageTotal(
+    { page: options.page, skip, length: page.length, hasMore, searching: terms !== undefined },
+    query,
+    (tx, sql, limit) => tx<Array<{ n: number }>>`
+      SELECT count(*)::int AS n FROM (
+        SELECT 1 FROM telegram.messages m WHERE ${filters(sql)} LIMIT ${limit}
+      ) matched`,
+    `[telegram-db] account message count for connection ${instance.id}`,
+  )
 
-  return {
-    messages: page.map(toMessage),
-    hasMore,
-    ...(total !== undefined && { total }),
-    ...(atLeast && { totalAtLeast: true }),
-  }
+  return { messages: page.map(toMessage), hasMore, ...totals }
 }
 
 export interface TelegramSearchOptions {

@@ -32,7 +32,7 @@
  */
 
 /** The report versions this file reads. 2 = 3.3.0 (`watchdog` added); 1 never shipped in a release. */
-export const MIN_HEALTH_VERSION = 1
+const MIN_HEALTH_VERSION = 1
 
 export type HealthVerdict = 'ok' | 'reconnecting' | 'looping' | 'stalled' | 'closed'
 
@@ -51,8 +51,6 @@ export interface EvolutionHealth {
   lastInboundAt?: string
   /** Current backoff attempt, 0 when stable. */
   attempt?: number
-  /** Watchdog gave up on this socket (report mode never does). */
-  watchdogGaveUp?: boolean
 }
 
 /**
@@ -73,7 +71,6 @@ export function parseEvolutionHealth(raw: unknown): EvolutionHealth | undefined 
     : []
   const inbound = isObject(raw.inbound) ? raw.inbound : {}
   const reconnects = isObject(raw.reconnects) ? raw.reconnects : {}
-  const watchdog = isObject(raw.watchdog) ? raw.watchdog : {}
 
   return {
     version,
@@ -82,7 +79,6 @@ export function parseEvolutionHealth(raw: unknown): EvolutionHealth | undefined 
     ...optionalTime('observedSince', raw.observedSince),
     ...optionalTime('lastInboundAt', inbound.lastMessageAt),
     ...(typeof reconnects.attempt === 'number' && Number.isFinite(reconnects.attempt) && { attempt: reconnects.attempt }),
-    ...(watchdog.gaveUp === true && { watchdogGaveUp: true }),
   }
 }
 

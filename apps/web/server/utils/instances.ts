@@ -596,7 +596,7 @@ export async function updateImapCredentials(instance: AppInstance, input: ImapCr
   const sql = await appDb()
   await sql`
     UPDATE app.mail_sync_state
-    SET auth_failed = false, auth_failures = 0, auth_retry_at = NULL, login_ok_at = now()
+    SET ${loginWorked(sql)}
     WHERE instance_id = ${instance.id}`
   await closeImapFor(instance)
   await requestImapSync(updated).catch(cause => console.error(`[imap] sync of ${instance.id} did not start`, cause))
@@ -2125,9 +2125,9 @@ export async function deleteInstance(
   else if (kind === 'whatsapp') {
     // A connection on its own server may hold a pool onto that server's message
     // database. Keyed on the row, so it outlives the row unless dropped here.
-    await closeKeyedPool(`evo:${instance.id}`)
-    await closeKeyedPool(`evo:${instance.id}:counts`)
-    await closeKeyedPool(`evo:${instance.id}:lids`)
+    await Promise.all(
+      [`evo:${instance.id}`, ...BACKGROUND_POOLS.map(pool => `evo:${instance.id}:${pool}`)].map(key => closeKeyedPool(key)),
+    )
     forgetInstanceStatus(instance.id)
     forgetInstanceCounts(instance.id)
     forgetKnownLids(instance.id)

@@ -841,7 +841,6 @@ export async function listAccountMessages(
     page,
     terms,
     order,
-    includeReactions: false,
   })
 
   const classified = records.map(row => ({

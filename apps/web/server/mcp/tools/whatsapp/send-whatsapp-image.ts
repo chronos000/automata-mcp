@@ -52,7 +52,7 @@ export default defineKindTool({
     await assertNumberAllowed(instance, scope, number)
 
     const image = await loadSendImage({ imageUrl, imageBase64 })
-    const text = caption?.trim() ? withSendDisclaimer(caption, sendDisclaimer) : sendDisclaimer
+    const text = captionWithDisclaimer(caption, sendDisclaimer)
 
     const evolution = useEvolutionClient()
     let result: Record<string, unknown>

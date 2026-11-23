@@ -942,13 +942,16 @@ async function nameDirectory(
   remoteJid: string,
   drafts: Array<{ fromMe: boolean, sender: MessageSender, mentioned: string[] }>,
 ): Promise<MentionDirectory | undefined> {
-  const needed = drafts.some(draft => draft.mentioned.length || (!draft.fromMe && draft.sender.identity))
-  if (!needed) return undefined
+  const needed = drafts.flatMap(draft => [
+    ...draft.mentioned,
+    ...(!draft.fromMe && draft.sender.identity ? [draft.sender.identity] : []),
+  ])
+  if (!needed.length) return undefined
 
   try {
     const evolution = evolutionClientForInstance(instance)
     const contacts = await contactDirectory(instance, evolution)
-    return await mentionDirectory({ instance, evolution, chatJids: [remoteJid], contacts })
+    return await mentionDirectory({ instance, evolution, chatJids: [remoteJid], contacts, needed })
   }
   catch (error) {
     console.error('[read] could not resolve names:', error)

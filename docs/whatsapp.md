@@ -2,7 +2,7 @@
 
 ## Which Evolution
 
-The deployment's own Evolution server runs **`evolution-api-reforged` 3.3.0**,
+The deployment's own Evolution server runs **`evolution-api-reforged` 3.3.1**,
 our fork of Evolution API
 ([repo](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged),
 formerly `ju-li/evolution-api-v2`). Every file that names it pins its digest:
@@ -108,6 +108,12 @@ What the fork changes, and why we run it:
   it, and WhatsApp does not send history twice. Such a batch is now split into
   parts under the limit, each stored and processed on its own; its
   `history batch:` log line shows `part=from-to/total`.
+- **A linked session no longer mutes the phone's notifications** (3.3.1,
+  [#82](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged/issues/82)).
+  Baileys sent a presence with no `type` (= `available`) on every credentials
+  update, so the session read as online even with `alwaysOnline: false`, and
+  WhatsApp held back push notifications on the phone until the number was
+  unlinked. Those updates no longer send a presence.
 
 ### Moving from stock Evolution 2.3.7
 

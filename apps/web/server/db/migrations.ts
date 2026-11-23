@@ -969,4 +969,29 @@ export const APP_MIGRATIONS: AppMigration[] = [
         ADD COLUMN socket_dead_by text CHECK (socket_dead_by IN ('socket_error', 'unacked_sends'));
     `,
   },
+  {
+    name: '0031_imap_auth_retry',
+    sql: /* sql */ `
+      -- A refused login stopped the scheduled sync for good at the first
+      -- refusal, even for credentials that had logged in thousands of times:
+      -- Zoho answered one run with AUTHENTICATIONFAILED between two that
+      -- worked, and that mailbox never synced again. Credentials that have
+      -- logged in before now get a few spaced retries (imap-sync.ts).
+      --
+      -- auth_failures: consecutive refused logins. auth_retry_at: while
+      -- auth_failed, when the scheduled sync may try once more (NULL = not
+      -- until the credentials change or Sync now is pressed). login_ok_at:
+      -- when these credentials last logged in; NULL = never, and a refusal
+      -- then stops at once as before.
+      ALTER TABLE app.mail_sync_state
+        ADD COLUMN auth_failures integer NOT NULL DEFAULT 0,
+        ADD COLUMN auth_retry_at timestamptz,
+        ADD COLUMN login_ok_at   timestamptz;
+      UPDATE app.mail_sync_state SET login_ok_at = last_success_at;
+      -- Mailboxes the old rule stopped after a password that had worked get
+      -- the retries they would have had, starting at the next sweep.
+      UPDATE app.mail_sync_state SET auth_failures = 1, auth_retry_at = now()
+        WHERE auth_failed AND last_success_at IS NOT NULL;
+    `,
+  },
 ]

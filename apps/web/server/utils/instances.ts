@@ -1,6 +1,7 @@
 import { assertNever } from '#shared/connection'
 import { randomBytes } from 'node:crypto'
 import { rememberBounded } from './lookup-cache'
+import { durationWords } from '../emails/layout'
 import type { AppInstance } from './app-db'
 import type { EvolutionInstanceRecord, LastInbound } from './evolution-db'
 import { healthDisagreement, healthSignals, parseEvolutionHealth, parseHealthMode } from './evolution-health'
@@ -590,9 +591,13 @@ export async function updateImapCredentials(instance: AppInstance, input: ImapCr
 
   const updated = await updateRow<AppInstance>('instances', instance.id, fields)
   await resetIfIdentityChanged(updated, { host: fields.imap_host, user: fields.imap_user })
-  // New credentials end any stop an old, refused password put on the sync.
+  // New credentials end any stop an old, refused password put on the sync,
+  // and `imapFields` just logged in with them, so they count as having worked.
   const sql = await appDb()
-  await sql`UPDATE app.mail_sync_state SET auth_failed = false WHERE instance_id = ${instance.id}`
+  await sql`
+    UPDATE app.mail_sync_state
+    SET auth_failed = false, auth_failures = 0, auth_retry_at = NULL, login_ok_at = now()
+    WHERE instance_id = ${instance.id}`
   await closeImapFor(instance)
   await requestImapSync(updated).catch(cause => console.error(`[imap] sync of ${instance.id} did not start`, cause))
   return updated
@@ -631,7 +636,16 @@ export async function getImapHealth(instance: AppInstance): Promise<ConnectionHe
 
   const state = await mailSyncState(instance)
   if (!state?.lastAttemptAt) return { state: 'connecting', detail: 'Waiting for the first sync.' }
-  if (state.authFailed) return { state: 'close', error: imapErrorMessage('auth') }
+  if (state.authFailed) {
+    const retryIn = state.authRetryAt ? Date.parse(state.authRetryAt) - Date.now() : undefined
+    return {
+      state: 'close',
+      error: retryIn === undefined
+        ? `${imapErrorMessage('auth')} Syncing has stopped until the credentials are updated or Sync now is pressed.`
+        : `${imapErrorMessage('auth')} The password worked before, so the sync tries again by itself `
+          + `${retryIn > 60_000 ? `in about ${durationWords(retryIn)}` : 'shortly'}; if it is refused again, update the credentials.`,
+    }
+  }
 
   const failedLast = state.lastErrorAt && (!state.lastSuccessAt || state.lastErrorAt > state.lastSuccessAt)
   if (failedLast) return { state: 'close', error: imapErrorMessage(state.lastErrorCode ?? 'connection failed') }

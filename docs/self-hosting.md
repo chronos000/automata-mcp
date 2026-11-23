@@ -39,7 +39,7 @@ cut that short.
 | Web app | this release | `3000`, or `$PORT` — the only port to publish |
 | Postgres | 16 (Alpine's `postgresql16`) | loopback, port `5432` |
 | Redis | 8.2.9 | `127.0.0.1:6379` |
-| Evolution API | 3.3.0 ([evolution-api-reforged](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged)) | `18080` |
+| Evolution API | 3.3.1 ([evolution-api-reforged](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged)) | `18080` |
 | Telegram bridge | this release | `18095` |
 
 The image is built on Evolution's own image, so Evolution runs exactly as it
@@ -175,7 +175,7 @@ on.
 | `web` | `ghcr.io/ju-li/automata-mcp-web:1` | — | `WEB_PORT` → 3000 |
 | `postgres` | `postgres:16.15-alpine` | — | no |
 | `redis` | `redis:8.2.9-alpine` | `whatsapp` | no |
-| `evolution` | `ghcr.io/operational-intelligence-inc/evolution-api-reforged:3.3.0` (digest-pinned) | `whatsapp` | no |
+| `evolution` | `ghcr.io/operational-intelligence-inc/evolution-api-reforged:3.3.1` (digest-pinned) | `whatsapp` | no |
 | `telegram-bridge` | `ghcr.io/ju-li/automata-mcp-telegram-bridge:1` | `telegram` | no |
 
 Only the web app is published. Everything else, including the webhooks

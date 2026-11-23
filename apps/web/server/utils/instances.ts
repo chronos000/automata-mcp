@@ -2127,8 +2127,10 @@ export async function deleteInstance(
     // database. Keyed on the row, so it outlives the row unless dropped here.
     await closeKeyedPool(`evo:${instance.id}`)
     await closeKeyedPool(`evo:${instance.id}:counts`)
+    await closeKeyedPool(`evo:${instance.id}:lids`)
     forgetInstanceStatus(instance.id)
     forgetInstanceCounts(instance.id)
+    forgetKnownLids(instance.id)
 
     // Uses the same server the instance was created on, with that server's own
     // global key when it brought one.

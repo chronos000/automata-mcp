@@ -378,3 +378,7 @@ automated checks.
 ## License
 
 [MIT](LICENSE)
+
+## Links
+
+[![ju-li/automata-mcp MCP server](https://glama.ai/mcp/servers/ju-li/automata-mcp/badges/score.svg)](https://glama.ai/mcp/servers/ju-li/automata-mcp)

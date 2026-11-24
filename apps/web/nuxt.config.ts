@@ -197,6 +197,10 @@ export default defineNuxtConfig({
     // leaves this install only when they submit it there. `off` hides the
     // offer. Ignored on the hosted offering. See server/utils/onboarding.ts.
     selfHostUpdatesUrl: 'https://billing.getautomata.app/self-host/updates',
+    // Hosted offering only: a promotion banner for organizations on Free, as
+    // `Holiday,YYYY-MM-DD,CODE,details` (end date inclusive, US Eastern). Empty
+    // = no banner. See server/utils/promo.ts.
+    promo: '',
     // Superseded by cloudUrl. Still read so a hosted deployment that upgrades
     // without setting the new variables keeps its plans on (fail closed).
     billing: '',

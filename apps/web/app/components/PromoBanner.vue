@@ -1,30 +1,26 @@
 <script setup lang="ts">
-// Thanksgiving 2026 promotion, top of every page for organizations on Free.
+// The promotion banner, top of every page while a promotion runs.
 //
-// Hosted only, and Free only: `plan` is undefined on a self-hosted deployment
-// and is the plan label ("Free", "Pro", "Pro (trial)", …) on the hosted one.
-// Hidden on the first-run setup (/welcome), which is a guided flow, not a page
-// to sell on. The code is a Stripe promotion code, typed on the Checkout page —
-// Checkout runs with `allow_promotion_codes` (apps/cloud/src/billing.ts), so
-// nothing here applies it. Only admins can reach Billing; members are told to
-// ask one. Remove this component (and its line in layouts/default.vue) when the
-// promotion ends.
-const PROMO_CODE = 'THANKSGIVING2026'
-
+// What it says comes from `NUXT_PROMO` (server/utils/promo.ts), and whether it
+// shows at all is the server's call: `/api/auth/me` sends `promo` only on the
+// hosted offering, only to organizations on Free, and only until its end date.
+// Nothing here re-decides that. Hidden on the first-run setup (/welcome), a
+// guided flow, not a page to sell on.
+//
+// The code is a Stripe promotion code typed on the Checkout page. Only admins
+// can reach Billing; members are told to ask one.
 const route = useRoute()
 const { user, isAdmin } = useSession()
-const { plan } = usePlan()
+const { promo } = usePlan()
 
-const visible = computed(() =>
-  Boolean(user.value) && plan.value === 'Free' && !route.path.startsWith('/welcome'),
-)
+const visible = computed(() => Boolean(user.value && promo.value) && !route.path.startsWith('/welcome'))
 </script>
 
 <template>
-  <div v-if="visible" class="bg-primary text-primary-foreground">
+  <div v-if="visible && promo" class="bg-primary text-primary-foreground">
     <p class="mx-auto max-w-5xl px-6 py-2 text-center text-sm">
-      Thanksgiving offer: 50% off Pro for 6 months with code
-      <code class="rounded bg-primary-foreground/10 px-1.5 py-0.5 font-mono font-semibold">{{ PROMO_CODE }}</code>.
+      {{ promo.holiday }} offer: {{ promo.details }} with code
+      <code class="rounded bg-primary-foreground/10 px-1.5 py-0.5 font-mono font-semibold">{{ promo.code }}</code>.
       <NuxtLink v-if="isAdmin" to="/billing" class="font-medium underline underline-offset-4">
         Upgrade to Pro
       </NuxtLink>

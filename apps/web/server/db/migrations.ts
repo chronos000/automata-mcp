@@ -994,4 +994,18 @@ export const APP_MIGRATIONS: AppMigration[] = [
         WHERE auth_failed AND last_success_at IS NOT NULL;
     `,
   },
+  {
+    name: '0032_instance_logged_out_at',
+    sql: /* sql */ `
+      -- WhatsApp only: when this app logged the account out — Log out on the
+      -- dashboard, or Import full history, which logs out so the next scan
+      -- imports (#260). Evolution keeps ownerJid through a logout, so without
+      -- a fact of our own a deliberate logout read as an outage and mailed
+      -- everyone after the grace period. Set by logoutInstance() once
+      -- Evolution accepted the call; cleared by the first read that sees the
+      -- account live 'open' again. A logout from the phone (401
+      -- device_removed) never sets it and still alerts.
+      ALTER TABLE app.instances ADD COLUMN logged_out_at timestamptz;
+    `,
+  },
 ]

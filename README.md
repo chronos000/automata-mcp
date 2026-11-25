@@ -137,7 +137,7 @@ Details: <https://www.getautomata.app/docs/permissions>.
 
 ## MCP tools
 
-Automata has 24 MCP tools; a connection only exposes the tools for its kind. Full reference: <https://www.getautomata.app/docs/reference/mcp-tools>.
+Automata has 26 MCP tools; a connection only exposes the tools for its kind. Full reference: <https://www.getautomata.app/docs/reference/mcp-tools>.
 
 | Connector | Tool | What it does |
 |---|---|---|
@@ -146,12 +146,14 @@ Automata has 24 MCP tools; a connection only exposes the tools for its kind. Ful
 | | `read-messages` | One chat's messages, newest first, paged, with optional date range |
 | | `search-messages` | Messages containing every word of a query |
 | | `send-text-message` | Send a text message (**write**) |
+| | `send-whatsapp-image` | Send a JPEG or PNG image with an optional caption (**write**) |
 | | `download-media` | The photo, video, voice note or file a message carries (opt-in) |
 | Telegram | `get-telegram-status` | Whether the account is linked and online, and sync progress |
 | | `list-telegram-chats` | Synced chats in scope: private chats, groups, supergroups, channels |
 | | `read-telegram-messages` | One chat's messages, newest first, paged |
 | | `search-telegram-messages` | Messages and captions containing every word of a query |
 | | `send-telegram-message` | Send plain text to a chat, @username or phone number (**write**) |
+| | `send-telegram-image` | Send a JPEG or PNG photo with an optional caption (**write**) |
 | | `download-telegram-media` | The photo, video, voice message or file a message carries (opt-in) |
 | Email | `get-mailbox-status` | Which mailbox, whether sync works, when it last ran |
 | | `list-mail-folders` | Folders in scope with synced and unread counts |
@@ -306,8 +308,12 @@ built from it. See [Self-hosting](docs/self-hosting.md).
 2. On its dashboard, create a **connector token** and choose what it may reach.
 3. Add the connector URL to your AI client:
    - **Claude:** open **Settings → Customize → Connectors → Add → Add custom
-     connector** and paste the connector URL. For Claude Code:
-     `claude mcp add --transport http <name> <url>`.
+     connector**, paste the `/mcp` URL, choose **No sign-in**, and under
+     **Request headers** add `Authorization` with the value `Bearer <token>`.
+     Request headers is still rolling out; without it, paste the connector URL
+     (`/mcp/<token>`) instead. In a Team or Enterprise organization every member
+     uses that one token. For Claude Code:
+     `claude mcp add --transport http <name> <app-url>/mcp --header "Authorization: Bearer <token>"`.
    - **ChatGPT:** turn on developer mode (**Settings → Apps & Connectors →
      Advanced settings**), create a custom connector, paste the connector URL
      (the `/mcp/<token>` form, since ChatGPT cannot set a header) and choose no
@@ -374,3 +380,7 @@ automated checks.
 ## License
 
 [MIT](LICENSE)
+
+## Links
+
+[![ju-li/automata-mcp MCP server](https://glama.ai/mcp/servers/ju-li/automata-mcp/badges/score.svg)](https://glama.ai/mcp/servers/ju-li/automata-mcp)

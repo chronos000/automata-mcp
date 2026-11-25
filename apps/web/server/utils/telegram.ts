@@ -1,5 +1,7 @@
 import type { AppInstance } from './app-db'
 import type { McpAuth } from './mcp-auth'
+import { assertChatAllowed, type McpScope } from './mcp-scope'
+import type { SendImage } from './send-image'
 import { assertNever, type ConnectionState } from '#shared/connection'
 
 /**
@@ -221,6 +223,14 @@ export function createTelegramBridge(creds: TelegramCredentials) {
     // count. The bridge stores it and fetches at backfill's own pace.
     backfill: (chatId: string) => client<BridgeBackfill>(`${session}/backfill`, { method: 'POST', body: { chatId } }),
     send: (chatId: string, text: string) => client<BridgeSent>(`${session}/send`, { method: 'POST', body: { chatId, text } }),
+    // One photo as base64 in JSON, like every other bridge route; the bridge
+    // caps this route's body to fit `MAX_SEND_IMAGE_BYTES`. Longer deadline:
+    // the bridge answers only once Telegram has the upload.
+    sendPhoto: (chatId: string, image: SendImage, caption: string) => client<BridgeSent>(`${session}/send-photo`, {
+      method: 'POST',
+      body: { chatId, caption, mimeType: image.mimeType, image: image.bytes.toString('base64') },
+      timeout: 90_000,
+    }),
     // The file as a byte stream, never read here: callers pipe it or read it
     // capped (telegram-media.ts). Metadata comes in the bridge's x-media-* headers.
     media: (chatId: string, messageId: number, maxBytes: number, signal?: AbortSignal) => openMediaStream(client, `${session}/media`, {
@@ -333,6 +343,34 @@ export async function deploymentBridgeReadiness(): Promise<BridgeReadiness> {
  * same `try` (a half-provisioned row, an app-database outage) are already shaped
  * for the browser and pass through unchanged.
  */
+/**
+ * The chat a send goes to, checked against the token's scope. A username is
+ * resolved through the bridge **before** the check, so a scoped token cannot
+ * reach by name a chat it could not reach by id; a bridge that cannot answer
+ * refuses the send rather than skipping the check. `what` words the refusal.
+ */
+export async function resolveTelegramSendTarget(
+  bridge: TelegramBridge,
+  scope: McpScope,
+  recipient: { chatId?: string, username?: string },
+  what: 'message' | 'image',
+): Promise<string> {
+  let target: string
+  if (recipient.chatId) {
+    target = recipient.chatId
+  }
+  else {
+    try {
+      target = (await bridge.resolve(recipient.username!)).chatId
+    }
+    catch (error) {
+      relayBridgeError(error, `look up that recipient, so the ${what} was not sent`)
+    }
+  }
+  assertChatAllowed(scope, target)
+  return target
+}
+
 export function relayBridgeError(error: unknown, action: string): never {
   if (isError(error)) throw error
   const status = httpStatusOf(error)

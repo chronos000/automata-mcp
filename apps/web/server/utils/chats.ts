@@ -3,7 +3,7 @@ import type { EvolutionClient } from './evolution'
 import type { MentionDirectory } from './mentions'
 import { applyMentions, authorName, contactsToDirectory, meaningfulName, mentionDirectory, mentionedJidsOf } from './mentions'
 import type { ChatActivityRow, MessageSender } from './evolution-db'
-import { canReadMessages, lastMessagePayloads, listChatActivity, listMessagesPage, senderOf } from './evolution-db'
+import { canReadMessages, lastMessagePayloads, listAccountMessagesPage, listChatActivity, listMessagesPage, senderOf } from './evolution-db'
 import type { LidLinks } from './whatsapp-identity'
 import { canonicalJid, lidLinks, linkedJidOf, phoneNumberBehind, phoneNumberOf } from './whatsapp-identity'
 import type { GroupInfo } from './whatsapp-groups'
@@ -812,7 +812,14 @@ export interface AccountMessageQuery {
 export interface AccountMessagePage {
   messages: AccountMessage[]
   hasMore: boolean
+  /**
+   * Exact on the last page. Before it, only with search terms, and then capped
+   * (`MATCH_COUNT_CAP`): exact below the cap, `totalAtLeast` at it, absent when
+   * the count ran out of time. Without terms the dashboard shows the account's
+   * cached count instead (`listAccountMessagesPage`).
+   */
   total?: number
+  totalAtLeast?: boolean
   protocolMessagesExcluded: number
   /** Always true. Stated rather than assumed — see `listAccountMessages`. */
   reactionsExcluded: boolean
@@ -840,6 +847,9 @@ export interface AccountMessagePage {
  * documents that pass as the expensive one. An unresolved sender falls back to
  * `pushName` through `authorName`, which still refuses a number or a JID as a
  * name.
+ *
+ * Read through `listAccountMessagesPage`, not the chat read: its cost is the
+ * page rather than the account, and its total is capped or absent — see there.
  */
 export async function listAccountMessages(
   instance: AppInstance,
@@ -847,12 +857,11 @@ export async function listAccountMessages(
 ): Promise<AccountMessagePage> {
   const { limit = 100, page = 1, terms, order = 'newest' } = query
 
-  const { records, hasMore, total } = await listMessagesPage(instance, {
+  const { records, hasMore, total, totalAtLeast } = await listAccountMessagesPage(instance, {
     limit,
     page,
     terms,
     order,
-    includeReactions: false,
   })
 
   const classified = records.map(row => ({
@@ -896,6 +905,7 @@ export async function listAccountMessages(
     })),
     hasMore,
     total,
+    ...(totalAtLeast && { totalAtLeast }),
     protocolMessagesExcluded,
     reactionsExcluded: true,
   }
@@ -952,13 +962,16 @@ async function nameDirectory(
   remoteJid: string,
   drafts: Array<{ fromMe: boolean, sender: MessageSender, mentioned: string[] }>,
 ): Promise<MentionDirectory | undefined> {
-  const needed = drafts.some(draft => draft.mentioned.length || (!draft.fromMe && draft.sender.identity))
-  if (!needed) return undefined
+  const needed = drafts.flatMap(draft => [
+    ...draft.mentioned,
+    ...(!draft.fromMe && draft.sender.identity ? [draft.sender.identity] : []),
+  ])
+  if (!needed.length) return undefined
 
   try {
     const evolution = evolutionClientForInstance(instance)
     const contacts = await contactDirectory(instance, evolution)
-    return await mentionDirectory({ instance, evolution, chatJids: [remoteJid], contacts })
+    return await mentionDirectory({ instance, evolution, chatJids: [remoteJid], contacts, needed })
   }
   catch (error) {
     console.error('[read] could not resolve names:', error)

@@ -2211,8 +2211,20 @@ export async function deleteInstance(
       try {
         await createEvolutionClient(creds)(`/instance/delete/${encodeURIComponent(instance.name)}`, { method: 'DELETE' })
       } catch (error) {
+        const status = httpStatusOf(error)
         // A 404 means Evolution has already lost it; carry on and clean up our row.
-        if (httpStatusOf(error) !== 404) throw error
+        // Anything else keeps the row, as a handled 503 that says so (#303) —
+        // which never reaches Nitro's log, so the cause is logged here.
+        if (status !== 404) {
+          console.error(
+            `[instances] could not delete the Evolution instance of ${instance.id}, so the connection was kept: `
+            + `Evolution answered ${status ?? (error as Error | undefined)?.message ?? 'nothing'}`,
+          )
+          throw createError({
+            statusCode: 503,
+            message: 'The WhatsApp server could not remove this connection, so it was kept. Try again in a few minutes.',
+          })
+        }
       }
     }
   }

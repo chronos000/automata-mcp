@@ -382,21 +382,6 @@ the full scan and logs once that the index is missing. Either way, one
 account's listing is read at most once a minute and shared by every page and
 caller.
 
-**Index message ids, for media downloads.** `download-media` checks that no
-other message of the account shares a message id, an index probe with this
-index, and finds the message by id inside its chat. Without it, it refuses on
-evolution-api-reforged rather than read every message of the account, and on
-stock 2.3.7 skips the check but finds the message by walking the chat — slow in
-a large group. Add it on every engine:
-
-```sql
-CREATE INDEX CONCURRENTLY IF NOT EXISTS message_instance_key_id_idx
-  ON "Message" ("instanceId", (key->>'id'));
-```
-
-Any index starting with these two columns counts; the app looks for one every
-ten minutes.
-
 To check that `read-messages` uses it, take your largest account's id from
 `"Instance"` and one of its busy chats:
 
@@ -672,7 +657,7 @@ ports](deploy-railway.md#pin-the-ports)).
 `mediaType` (`image`, `video`, `video-note`, `audio`, `voice`, `document` or
 `sticker`), `mimetype`, and — when the sender's device said — `fileName` and
 `fileSize`. These keys are additive: a message without a file carries none of
-them. `download-media` fetches the file by the chat's `jid` and the message `id`.
+them. `download-whatsapp-media` fetches the file by the chat's `jid` and the message `id`.
 
 - **Opt-in per token.** Not included in "All actions", so no existing token gains
   it on an upgrade: tick it under *Media downloads* in the token's scope, in
@@ -717,16 +702,15 @@ them. `download-media` fetches the file by the chat's `jid` and the message `id`
 - **Costly.** Each call and each followed link counts against the
   per-connection budget for costly tools (`NUXT_MCP_RATE_EXPENSIVE_PER_MINUTE`),
   and is recorded in tool-call history like any call.
-- **Message ids that repeat.** evolution-api-reforged (3.x) reloads a message
-  by its id alone when downloading, and the id is the sender's choice, so it can
-  repeat. Wherever the `message_instance_key_id_idx` index (see "Indexes on
-  Evolution's tables" above) exists, on any
-  engine, a download is refused (409) when another message of the account
-  shares the id — in another chat, in the other direction, or from another
-  sender in the same group — checked before and again after Evolution answers. Without the
-  index, media downloads answer 501 on a server that does not report a 2.x
-  version, rather than scan the account; stock 2.3.7 downloads from the message
-  the app sends, so there the check is skipped.
+- **Message ids that repeat.** A message id is the sender's choice, so two
+  chats can hold messages with the same id. The app finds the message inside
+  the token's chats and sends Evolution its full key (chat, id and direction).
+  Stock 2.3.7 downloads from the message the app sends, and
+  evolution-api-reforged from 3.3.2 reloads the message by that full key. Older
+  reforged releases (3.0–3.3.1) reload by the id alone and can fetch another
+  chat's file; the app compares the file's SHA-256 with the one WhatsApp
+  recorded on the message and refuses a mismatch (409) without returning
+  anything. Update to 3.3.2 or later.
 - **Not downloadable:** view-once media; a message whose file reference does
   not point at WhatsApp's media servers (the stored message is the sender's, and
   Evolution would fetch whatever address it names — refused with 422); on

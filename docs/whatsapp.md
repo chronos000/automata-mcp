@@ -660,10 +660,9 @@ ports](deploy-railway.md#pin-the-ports)).
 them. `download-whatsapp-media` fetches the file by the chat's `jid` and the message `id`.
 
 - **Opt-in per token.** Not included in "All actions", so no existing token gains
-  it on an upgrade: tick it under *Media downloads* in the token's scope, in
+  it on an upgrade: tick it under *Opt-in actions* in the token's scope, in
   either mode. Chat scope applies as for every read — the chat is checked, then
-  the message is looked up **inside** that chat (Evolution's own media route
-  finds any message of the account by id alone).
+  the message is looked up **inside** that chat.
 - **Never stored.** Each call downloads the file through Evolution's
   `/chat/getBase64FromMediaMessage` and hands it straight back; nothing is
   written to disk. That route answers with the whole file as base64 inside one
@@ -697,11 +696,14 @@ them. `download-whatsapp-media` fetches the file by the chat's `jid` and the mes
   the URL path (`/mcp/<token>`) cannot follow it and should ask for
   `delivery: "inline"`. Links need `NUXT_PUBLIC_APP_URL`; they are sealed with
   `NUXT_MEDIA_URL_SECRET`, or a random key per process when it is unset (links
-  then end on restart; set it for several replicas). Behind a proxy that only
+  then end on restart; set it for several replicas). The hosted offering issues
+  no links without it. Behind a proxy that only
   forwards `/mcp`, forward `/mcp-media/` too.
-- **Costly.** Each call and each followed link counts against the
-  per-connection budget for costly tools (`NUXT_MCP_RATE_EXPENSIVE_PER_MINUTE`),
-  and is recorded in tool-call history like any call.
+- **Costly.** Each call counts against the token's and organization's
+  budgets and the per-connection budget for costly tools
+  (`NUXT_MCP_RATE_EXPENSIVE_PER_MINUTE`); each followed link counts against the
+  costly-tools budget again, since that is when the file is fetched. Both are
+  recorded in tool-call history like any call.
 - **Message ids that repeat.** A message id is the sender's choice, so two
   chats can hold messages with the same id. The app finds the message inside
   the token's chats and sends Evolution its full key (chat, id and direction).

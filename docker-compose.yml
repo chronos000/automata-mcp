@@ -94,7 +94,7 @@ services:
       NUXT_MCP_RATE_TOKEN_PER_MINUTE: ${MCP_RATE_TOKEN_PER_MINUTE:-120}
       NUXT_MCP_RATE_ORG_PER_MINUTE: ${MCP_RATE_ORG_PER_MINUTE:-600}
       NUXT_MCP_RATE_EXPENSIVE_PER_MINUTE: ${MCP_RATE_EXPENSIVE_PER_MINUTE:-30}
-      # Media downloads (download-media, download-telegram-media). Empty = the
+      # Media downloads (download-whatsapp-media, download-telegram-media). Empty = the
       # defaults (25 MiB, 5 MiB inline, a random link key per process). See
       # docs/whatsapp.md "Downloading media".
       NUXT_MEDIA_MAX_BYTES: ${MEDIA_MAX_BYTES:-}

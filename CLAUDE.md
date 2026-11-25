@@ -52,6 +52,7 @@ pnpm dev              # Nuxt on the host, http://localhost:3000
 pnpm typecheck        # nuxt typecheck across app + server
 pnpm test:emails      # account-email snapshots + rules (node --test; UPDATE_SNAPSHOTS=1 to accept)
 pnpm test:media       # streaming base64 decoder behind WhatsApp media downloads (node --test)
+pnpm test:pg-guard    # SQL guard's reaching-builtin gate (node --test)
 pnpm build            # production build -> apps/web/.output/
 pnpm listings:check   # directory listings agree with package.json version + tool names
 pnpm release:version X.Y.Z   # write version into package.json + every listing
@@ -60,7 +61,7 @@ pnpm cloud:crm-backfill      # one-off Brevo upsert of every user (hosted)
 pnpm services:down / :logs / :ps
 ```
 
-Nuxt deliberately **not** in compose (HMR); no `predev` hook — bring services up yourself. No lint config, **no test framework**; `pnpm typecheck` + `pnpm bridge:typecheck` + `pnpm cloud:typecheck` + `pnpm test:emails` + `pnpm test:media` (Node's built-in runner over the email templates and the base64 decoder, nothing else) only automated checks.
+Nuxt deliberately **not** in compose (HMR); no `predev` hook — bring services up yourself. No lint config, **no test framework**; `pnpm typecheck` + `pnpm bridge:typecheck` + `pnpm cloud:typecheck` + `pnpm test:emails` + `pnpm test:media` + `pnpm test:pg-guard` (Node's built-in runner over the email templates, the base64 decoder and the SQL guard's builtin gate, nothing else) only automated checks.
 
 ## Environment
 
@@ -380,7 +381,7 @@ Connection far wider than anything else app holds (every user's messages, every 
    - Key strictly on `Relation Name`. `Function Scan` node carries `Schema` and `Function Name` but no relation, so collecting `Schema` opportunistically fabricates pairs.
    - **`CREATE TABLE AS` and `SELECT … INTO` plan to bare `Result` node with no target relation; `REFRESH MATERIALIZED VIEW` answers literal string `"Utility Statement"` with no `Plan` key.** Relations-only check reads all three as "touches nothing". Hence: every top-level element must be object with `Plan`; write must have `ModifyTable` **root** with `Operation ∈ {Insert, Update, Delete, Merge}`.
    - **Partitioned table never surfaces parent** — `SELECT` on `public.t` plans as `Append` over `t_p1`, `t_p2`. Allowlist expanded *downward* through `pg_inherits`; expanding can't admit sibling, mapping plan upward could. Correctness bug that reads to user as security bug.
-4. **Function gate.** `SELECT pg_read_file('/etc/passwd')` plans to `Result` node with **zero relations**, as does any call into plpgsql body — relations alone don't contain query. Function names collected from plan's expression strings (heuristic erring toward refusal; names resolving to nothing ignored), resolved against `pg_proc`; anything outside `pg_catalog`, anything `prosecdef`, and denylist of reaching builtins refused.
+4. **Function gate.** `SELECT pg_read_file('/etc/passwd')` plans to `Result` node with **zero relations**, as does any call into plpgsql body — relations alone don't contain query. Function names collected from plan's expression strings (heuristic erring toward refusal; names resolving to nothing ignored), resolved against `pg_proc`; anything outside `pg_catalog`, anything `prosecdef`, and reaching builtins (`reachesOutside`) refused. Reaching = reads a table or runs SQL text **inside** the function, so plan names no relation and scope check sees nothing: whole `*_to_xml*` family matched by **pattern** (`table_to_xml(regclass)` once read any table past scope because three of fifteen were listed), `ts_stat`/`ts_rewrite` (run their text), plus the file/lock/dblink list. New builtin taking a `regclass`, a refcursor or query text = ask whether it reads rows; `pnpm test:pg-guard` pins the set. Never refuse `nextval` — it's in the plan of every INSERT into a serial column.
 
 **One transaction, not two.** Plan check and execution share it, so EXPLAIN's `AccessShareLock` still held when statement runs — stops concurrent `CREATE OR REPLACE VIEW` repointing view between check and execution — and both under one `SET LOCAL`, so same text provably resolves to same objects. Reads use `sql.begin('read only', …)`; `CREATE TEMP TABLE` inside fails 25006, last line of defence beneath other three.
 

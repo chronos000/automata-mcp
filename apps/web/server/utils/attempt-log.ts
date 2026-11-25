@@ -60,10 +60,11 @@ export class AttemptLog {
   }
 
   /** When `key` may try again, or 0 when it is under the limit now. */
-  blockedUntil(key: string, now: number, limit = this.options.limit): number {
+  blockedUntil(key: string, now: number): number {
+    const { limit, windowMs } = this.options
     const recent = this.recent(key, now)
     if (recent.length < limit) return 0
-    return recent[recent.length - limit]! + this.options.windowMs
+    return recent[recent.length - limit]! + windowMs
   }
 
   add(key: string, at: number): void {

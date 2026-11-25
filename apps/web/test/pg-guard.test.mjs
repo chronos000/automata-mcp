@@ -10,9 +10,11 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { reachesOutside, readPlan, statementRefs } from '../server/utils/pg-guard.ts'
+import { reachesOutside, readPlan } from '../server/utils/pg-guard.ts'
+import { sqlRefs } from '../server/utils/sql-refs.ts'
 
-const functionNamesInText = sql => statementRefs(sql).calls.map(call => call.name)
+const functionNamesInText = sql => sqlRefs(sql).calls
+const statementRefs = sqlRefs
 
 // Every pg_catalog function in the SQL/XML export family on PostgreSQL 16,
 // read from pg_proc. Each reads a table, schema, database or query result.
@@ -70,7 +72,7 @@ test('a quoted call is caught in the text and in the plan', () => {
     },
   }])
   assert.deepEqual(facts.relations, [])
-  assert.ok(facts.functions.some(reachesOutside))
+  assert.ok(facts.refs.calls.some(reachesOutside))
 })
 
 test('a pg_catalog-qualified call in the plan is caught', () => {
@@ -85,7 +87,7 @@ test('a pg_catalog-qualified call in the plan is caught', () => {
       'Output': [`pg_catalog.table_to_xml('users'::regclass, true, false, ''::text)`],
     },
   }])
-  assert.ok(facts.functions.includes('table_to_xml'))
+  assert.ok(facts.refs.calls.includes('table_to_xml'))
 })
 
 test('ts_stat as a Function Scan is caught in the plan', () => {
@@ -98,29 +100,29 @@ test('ts_stat as a Function Scan is caught in the plan', () => {
       'Output': ['word', 'ndoc', 'nentry'],
     },
   }])
-  assert.ok(facts.functions.includes('ts_stat'))
-  assert.ok(facts.functions.some(reachesOutside))
+  assert.ok(facts.refs.calls.includes('ts_stat'))
+  assert.ok(facts.refs.calls.some(reachesOutside))
 })
 
 // ---- Tokenizer: every spelling PostgreSQL accepts for a call, operator or cast.
 
-const calls = sql => statementRefs(sql).calls
+const calls = sql => sqlRefs(sql).calls
 
 test('quoted and schema-qualified quoted calls are collected', () => {
-  assert.deepEqual(calls('SELECT "peek"(1)'), [{ name: 'peek' }])
-  assert.deepEqual(calls('SELECT zz."peek"(1)'), [{ name: 'peek', schema: 'zz' }])
-  assert.deepEqual(calls('SELECT "zz"."peek" (1)'), [{ name: 'peek', schema: 'zz' }])
+  assert.deepEqual(calls('SELECT "peek"(1)'), ['peek'])
+  assert.deepEqual(calls('SELECT zz."peek"(1)'), ['peek'])
+  assert.deepEqual(calls('SELECT "zz"."peek" (1)'), ['peek'])
 })
 
 test('a quoted mixed-case name keeps its case; an unquoted one folds', () => {
-  assert.deepEqual(calls('SELECT "Peek"()'), [{ name: 'Peek' }])
-  assert.deepEqual(calls('SELECT PEEK()'), [{ name: 'peek' }])
+  assert.deepEqual(calls('SELECT "Peek"()'), ['Peek'])
+  assert.deepEqual(calls('SELECT PEEK()'), ['peek'])
 })
 
 test('a comment between the name and the parenthesis does not hide the call', () => {
-  assert.deepEqual(calls('SELECT peek/**/(1)'), [{ name: 'peek' }])
-  assert.deepEqual(calls('SELECT peek /* a /* nested */ comment */ (1)'), [{ name: 'peek' }])
-  assert.deepEqual(calls('SELECT peek -- line comment\n(1)'), [{ name: 'peek' }])
+  assert.deepEqual(calls('SELECT peek/**/(1)'), ['peek'])
+  assert.deepEqual(calls('SELECT peek /* a /* nested */ comment */ (1)'), ['peek'])
+  assert.deepEqual(calls('SELECT peek -- line comment\n(1)'), ['peek'])
 })
 
 test('names inside strings, dollar quotes and comments are not calls', () => {
@@ -129,7 +131,7 @@ test('names inside strings, dollar quotes and comments are not calls', () => {
 })
 
 test('a Unicode-escaped identifier is decoded, and UESCAPE is opaque', () => {
-  assert.deepEqual(calls('SELECT U&"\\0070eek"(1)'), [{ name: 'peek' }])
+  assert.deepEqual(calls('SELECT U&"\\0070eek"(1)'), ['peek'])
   assert.equal(statementRefs('SELECT U&"!0070eek" UESCAPE \'!\' (1)').opaque, true)
 })
 
@@ -145,12 +147,12 @@ test('cast target type names are collected as identifiers', () => {
   assert.ok(statementRefs('SELECT CAST(1 AS "MyType")').identifiers.includes('MyType'))
 })
 
-test('the plan side: a dotted user call in Output is collected with its schema', () => {
+test('the plan side: a dotted user call in Output is collected', () => {
   // EXPLAIN VERBOSE prints a VOLATILE call outside search_path as zz.peek(1).
   const facts = readPlan([{ Plan: { 'Node Type': 'Result', 'Output': ['zz.peek(1)'] } }])
-  assert.ok(facts.refs.calls.some(call => call.name === 'peek' && call.schema === 'zz'))
+  assert.ok(facts.refs.calls.includes('peek'))
   const quoted = readPlan([{ Plan: { 'Node Type': 'Result', 'Output': ['zz."Peek"(1)'] } }])
-  assert.ok(quoted.refs.calls.some(call => call.name === 'Peek'))
+  assert.ok(quoted.refs.calls.includes('Peek'))
 })
 
 test('keywords followed by a parenthesis are not calls', () => {

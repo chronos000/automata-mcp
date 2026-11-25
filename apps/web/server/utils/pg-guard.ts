@@ -62,6 +62,9 @@ const CALL_RE = /(?:^|[^."\w])([a-z_][a-z0-9_$]*)\s*\(/g
  */
 const TEXT_CALL_RE = /([a-z_][a-z0-9_$]*)\s*\(/gi
 
+/** A `pg_catalog`-qualified call in plan output: `pg_catalog.table_to_xml(`. */
+const CATALOG_CALL_RE = /(?:^|[^."\w])pg_catalog\.([a-z_][a-z0-9_$]*)\s*\(/g
+
 /**
  * `pg_catalog` functions that read or write outside the query's own relations.
  * Being builtin is not the same as being harmless.
@@ -85,8 +88,27 @@ const CATALOG_DENYLIST = new Set([
   'pg_try_advisory_xact_lock', 'pg_try_advisory_xact_lock_shared',
   'pg_advisory_unlock', 'pg_advisory_unlock_shared', 'pg_advisory_unlock_all',
   'dblink', 'dblink_exec', 'dblink_connect',
-  'query_to_xml', 'query_to_xml_and_xmlschema', 'database_to_xml',
+  // Run SQL text they are handed, which the plan never shows: `ts_stat(query)`
+  // and `ts_rewrite(tsquery, select)`. The `*_to_xml*` family is matched by
+  // name pattern in `reachesOutside` instead of listed here.
+  'ts_stat', 'ts_rewrite',
 ])
+
+/**
+ * The SQL/XML export family: `table_to_xml`, `schema_to_xml`, `database_to_xml`,
+ * `query_to_xml`, `cursor_to_xml` and every `_and_xmlschema` / `xmlschema`
+ * variant. Each reads whole tables (or runs a query) *inside* the function, so
+ * the plan is a bare `Result` naming no relation and `assertRelationsInScope`
+ * has nothing to check — `table_to_xml('public.users'::regclass, …)` read any
+ * table past a token's scope. Matched as a pattern, not a list, because listing
+ * three of fifteen is how the rest got through.
+ */
+const XML_EXPORT_RE = /_to_xml/
+
+/** A builtin that reads or writes outside the query's own relations. */
+export function reachesOutside(name: string): boolean {
+  return CATALOG_DENYLIST.has(name) || XML_EXPORT_RE.test(name)
+}
 
 /**
  * Catalog relations that hold something other than schema, refused for a token
@@ -119,6 +141,10 @@ const CONTENT_CATALOGS = new Set([
  */
 const SCOPED_CONTENT_FUNCTIONS = new Set([
   'pg_stat_get_activity', 'pg_stat_get_backend_activity',
+  // The extension's own text of every normalised statement, constants included
+  // unless jumbled. Installed into `pg_catalog` on some servers, so the
+  // non-`pg_catalog` refusal in `assertFunctionsSafe` does not reach it there.
+  'pg_stat_statements',
 ])
 
 /** SQL keywords that read as calls because of the trailing paren. Not functions. */
@@ -285,6 +311,12 @@ function collectCalls(value: unknown, into: Set<string>): void {
     const name = match[1]!.toLowerCase()
     if (!NOT_FUNCTIONS.has(name)) into.add(name)
   }
+  // EXPLAIN prints a builtin unqualified while `pg_catalog` is on the path,
+  // but as `pg_catalog.name(` once a same-named function in an allowlisted
+  // schema shadows it — which `CALL_RE` skips for the dot. The statement text
+  // may have quoted it past `TEXT_CALL_RE` too (`"pg_catalog"."table_to_xml"(`),
+  // so this is the last place it can be seen.
+  for (const match of value.matchAll(CATALOG_CALL_RE)) into.add(match[1]!.toLowerCase())
 }
 
 /**
@@ -360,12 +392,12 @@ export function assertIsModify(facts: PlanFacts, allowWholeTable = false): void 
  * an operator, a cast — are ignored, so the cost of over-collecting is zero.
  */
 export async function assertFunctionsSafe(tx: TransactionSql, functions: string[]): Promise<void> {
-  const denied = functions.find(n => CATALOG_DENYLIST.has(n))
+  const denied = functions.find(reachesOutside)
   if (denied) {
     refuse(`This connector will not run a query that calls ${denied}(). It reaches outside the tables this token is scoped to.`)
   }
 
-  const names = functions.filter(n => !CATALOG_DENYLIST.has(n))
+  const names = functions.filter(n => !reachesOutside(n))
   if (names.length === 0) return
 
   const rows = await tx<Array<{ proname: string, nspname: string, prosecdef: boolean }>>`

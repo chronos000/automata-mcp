@@ -78,6 +78,15 @@ export async function openTelegramMedia(
       console.error(`[media] Telegram download on connection ${auth.instance.id} failed: the bridge answered 502`)
       throw createError({ statusCode: 502, message: typeof said === 'string' ? said : 'Telegram returned no file for this message.' })
     }
+    // An older bridge has no media route: its router's 404 carries no `code`,
+    // where every 404 the bridge means does. Say so, rather than "Not found".
+    if (isBridgeRouteMissing(error)) {
+      console.error('[telegram] download-telegram-media: the Telegram bridge has no media route; it needs updating')
+      throw createError({
+        statusCode: 503,
+        message: 'This connection\'s Telegram bridge is too old to download media; it needs updating.',
+      })
+    }
     relayBridgeError(error, 'download the file')
   }
 

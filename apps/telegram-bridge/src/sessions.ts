@@ -237,8 +237,10 @@ export class SessionManager {
   private mediaInFlight = 0
   /**
    * Telegram requests a cut-off download stopped waiting for but which have not
-   * settled yet. They count against the same limit as running downloads, so
-   * cancelling over and over cannot pile up live requests.
+   * settled yet. Each keeps its session's one place (`mediaBySession`) until it
+   * settles, so cancelling over and over cannot pile up live requests; they no
+   * longer count against the bridge-wide limit, which one account's abandoned
+   * requests must not be able to fill.
    */
   private mediaAbandoned = 0
   /** Downloads running now per session, so one account cannot hold every slot. */
@@ -665,14 +667,9 @@ export class SessionManager {
     const client = this.connectedClient(rt)
     const store = new SyncStore(this.sql, id)
 
-    const chat = await store.chat(chatId)
+    const { chat, peer } = await peerFor(store, chatId)
     if (chat?.migrated_to) {
       throw new HttpError(409, `This group was upgraded to a supergroup. Send to ${chat.migrated_to} instead.`)
-    }
-    const accessHash = chat?.access_hash ?? (BigInt(chatId) > 0n ? await store.userAccessHash(chatId) : null)
-    const peer = chat || accessHash ? inputPeerFor(chatId, accessHash) : undefined
-    if (!peer) {
-      throw new HttpError(404, 'This chat is not known to the bridge. List chats, or resolve the user first.')
     }
 
     let message: Api.Message
@@ -708,7 +705,11 @@ export class SessionManager {
   }> {
     // A download holds a Telegram connection's attention for its duration, in a
     // process every linked account shares: a few at a time, the rest refused.
-    if (this.mediaInFlight + this.mediaAbandoned >= MEDIA_DOWNLOADS_IN_FLIGHT) {
+    // Only live downloads count here. A request abandoned mid-download holds
+    // its own session's place until it settles (`holdAbandoned`), but not the
+    // bridge-wide one: otherwise a couple of accounts that keep cancelling
+    // could block media for every account for up to ten minutes.
+    if (this.mediaInFlight >= this.config.mediaDownloads) {
       throw new HttpError(429, 'Too many file downloads are in progress on the bridge. Try again in a few seconds.')
     }
     if ((this.mediaBySession.get(id) ?? 0) >= MEDIA_DOWNLOADS_PER_SESSION) {
@@ -917,12 +918,7 @@ export class SessionManager {
     const store = new SyncStore(this.sql, id)
     const boundedTelegram = <T>(work: Promise<T>): Promise<T> => untilAborted(work, stop, stopped, w => this.holdAbandoned(id, w, client))
 
-    const chat = await bounded(store.chat(chatId))
-    const accessHash = chat?.access_hash ?? (BigInt(chatId) > 0n ? await bounded(store.userAccessHash(chatId)) : null)
-    const peer = chat || accessHash ? inputPeerFor(chatId, accessHash) : undefined
-    if (!peer) {
-      throw new HttpError(404, 'This chat is not known to the bridge. List chats first.')
-    }
+    const { peer } = await peerFor(store, chatId, bounded)
 
     let message: Api.Message | undefined
     try {
@@ -934,7 +930,7 @@ export class SessionManager {
       throw toHttpError(error)
     }
     if (!message || markedId(message.peerId) !== chatId) {
-      throw new HttpError(404, 'No message with this id in this chat.')
+      throw new HttpError(404, 'No message with this id in this chat.', 'message_not_found')
     }
 
     const info = mediaInfoOf(message.media)
@@ -1230,7 +1226,7 @@ export class SessionManager {
 
   private async row(id: string): Promise<SessionRow> {
     const row = await this.findRow(id)
-    if (!row) throw new HttpError(404, 'No such session.')
+    if (!row) throw new HttpError(404, 'No such session.', 'session_unknown')
     return row
   }
 
@@ -1534,6 +1530,27 @@ function parseResolveQuery(query: string): { username: string } | { phone: strin
 }
 
 /**
+ * A known chat's stored row (when it has one) and the input peer to reach it:
+ * a chat row, or for a private chat the user's stored access hash. Neither =
+ * a chat this bridge has never seen, refused with `chat_unknown` (the app
+ * reads a 404 without a code as "bridge too old"). `wrap` bounds the database
+ * reads, for callers that hold a deadline.
+ */
+async function peerFor(
+  store: SyncStore,
+  chatId: string,
+  wrap: <T>(work: Promise<T>) => Promise<T> = work => work,
+): Promise<{ chat: Awaited<ReturnType<SyncStore['chat']>>, peer: Api.TypeInputPeer }> {
+  const chat = await wrap(store.chat(chatId))
+  const accessHash = chat?.access_hash ?? (BigInt(chatId) > 0n ? await wrap(store.userAccessHash(chatId)) : null)
+  const peer = chat || accessHash ? inputPeerFor(chatId, accessHash) : undefined
+  if (!peer) {
+    throw new HttpError(404, 'This chat is not known to the bridge. List chats, or resolve the user first.', 'chat_unknown')
+  }
+  return { chat, peer }
+}
+
+/**
  * `work`, or the error `stopped()` makes as soon as `signal` aborts — including
  * when it already has. The work itself runs on; this only stops waiting for it,
  * and hands it to `abandon` when it is still pending at that point.
@@ -1564,11 +1581,9 @@ function untilAborted<T>(
   })
 }
 
-/** Media downloads one bridge runs at once. */
-const MEDIA_DOWNLOADS_IN_FLIGHT = 2
 /** Media downloads one linked account runs at once. */
 const MEDIA_DOWNLOADS_PER_SESSION = 1
-/** One download's deadline, whatever the app's own is. */
+/** One download's deadline. The app allows this plus a margin (`BRIDGE_MEDIA_DEADLINE_MS` in apps/web/server/utils/telegram.ts): change both. */
 const MEDIA_DOWNLOAD_DEADLINE_MS = 120_000
 /** When an abandoned Telegram request still pending is logged. */
 const MEDIA_ABANDONED_WARN_MS = 120_000
@@ -1589,7 +1604,7 @@ function toHttpError(error: unknown): HttpError {
   if (/^FLOOD_(PREMIUM_)?WAIT/.test(code)) {
     return new HttpError(429, `Telegram asked to slow down (${code}). Try again later.`)
   }
-  if (NOT_FOUND.has(code)) return new HttpError(404, `Telegram found nothing for that (${code}).`)
+  if (NOT_FOUND.has(code)) return new HttpError(404, `Telegram found nothing for that (${code}).`, 'not_found')
   if (/^[A-Z][A-Z0-9_]+$/.test(code)) return new HttpError(422, `Telegram refused the request: ${code}.`)
   throw error
 }

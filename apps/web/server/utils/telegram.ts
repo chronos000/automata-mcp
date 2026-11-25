@@ -163,7 +163,15 @@ export type BridgeResolved = {
   known: boolean
 }
 
-const BRIDGE_MEDIA_DEADLINE_MS = 90_000
+/**
+ * End-to-end deadline on one media request to the bridge, body included
+ * (`applyRequestDeadline`). The bridge gives a download 120 s
+ * (`MEDIA_DOWNLOAD_DEADLINE_MS` in apps/telegram-bridge/src/sessions.ts); this
+ * allows that plus a margin, so a download the bridge would finish is never cut
+ * by the app first, and one the bridge gives up on ends here with the bridge's
+ * own answer. Change both together.
+ */
+const BRIDGE_MEDIA_DEADLINE_MS = 130_000
 
 export type BridgeSent = {
   chatId: string

@@ -1,5 +1,6 @@
 import type { Sql, TransactionSql } from 'postgres'
 import type { McpScope } from './mcp-scope'
+import { sqlRefs, mergeSqlRefs, type SqlRefs } from './sql-refs.ts'
 
 /**
  * What a caller-supplied SQL statement is allowed to touch.
@@ -44,26 +45,6 @@ const EXPRESSION_KEYS = [
   'Group Key', 'Presorted Key', 'Function Call', 'Table Function Call',
   'Conflict Filter', 'Order By', 'Hash Key', 'Cache Key', 'Repeatable Seed',
 ]
-
-/**
- * A bare `name(` in expression text. Anchored on a non-identifier, non-dot
- * prefix so `a.b(` and `"x"(` do not report `b` or `x`.
- */
-const CALL_RE = /(?:^|[^."\w])([a-z_][a-z0-9_$]*)\s*\(/g
-
-/**
- * Every `name(` in a piece of SQL, including a schema-qualified one.
- *
- * Deliberately more permissive than `CALL_RE`, which skips a name preceded by a
- * dot because plan output writes `contextInfo.foo(`-shaped noise. Here the
- * source is the caller's own statement and `zz.peek(1)` must be caught, so the
- * qualifier is ignored and the trailing identifier is taken. Over-collecting is
- * free: a name that resolves to nothing in `pg_proc` is dropped.
- */
-const TEXT_CALL_RE = /([a-z_][a-z0-9_$]*)\s*\(/gi
-
-/** A `pg_catalog`-qualified call in plan output: `pg_catalog.table_to_xml(`. */
-const CATALOG_CALL_RE = /(?:^|[^."\w])pg_catalog\.([a-z_][a-z0-9_$]*)\s*\(/g
 
 /**
  * `pg_catalog` functions that read or write outside the query's own relations.
@@ -147,14 +128,6 @@ const SCOPED_CONTENT_FUNCTIONS = new Set([
   'pg_stat_statements',
 ])
 
-/** SQL keywords that read as calls because of the trailing paren. Not functions. */
-const NOT_FUNCTIONS = new Set([
-  'select', 'from', 'where', 'and', 'or', 'not', 'in', 'exists', 'case', 'when',
-  'then', 'else', 'end', 'cast', 'values', 'array', 'row', 'any', 'all', 'some',
-  'between', 'like', 'ilike', 'is', 'null', 'true', 'false', 'on', 'using',
-  'distinct', 'order', 'group', 'by', 'having', 'limit', 'offset', 'as', 'union',
-])
-
 export interface PlanRelation {
   schema: string
   relation: string
@@ -162,7 +135,9 @@ export interface PlanRelation {
 }
 
 /**
- * Function names mentioned in a statement's own text.
+ * The functions, operators and type names a statement's own text mentions,
+ * read by `sql-refs.ts`'s tokenizer (quoted, mixed-case, commented and
+ * operator spellings included).
  *
  * **This exists because the plan is not enough.** Postgres constant-folds an
  * IMMUTABLE function with constant arguments during planning, so
@@ -170,23 +145,22 @@ export interface PlanRelation {
  * computed value* — no relation, no `Function Name`, nothing for
  * `assertRelationsInScope` or the plan's own function gate to catch. A
  * pre-existing IMMUTABLE function in the user's database would otherwise read
- * any table the role can reach, straight past the allowlist.
+ * any table the role can reach, straight past the allowlist. Operators and
+ * casts backed by such a function fold the same way.
  *
  * It also has to run BEFORE the EXPLAIN, because the fold happens *during*
  * planning: by the time a plan comes back, the function has already run.
  */
-export function functionNamesInText(statement: string): string[] {
-  const names = new Set<string>()
-  for (const match of statement.matchAll(TEXT_CALL_RE)) {
-    const name = match[1]!.toLowerCase()
-    if (!NOT_FUNCTIONS.has(name)) names.add(name)
-  }
-  return [...names]
+export function statementRefs(statement: string): SqlRefs {
+  return sqlRefs(statement)
 }
 
 export interface PlanFacts {
   relations: PlanRelation[]
+  /** Called function names, exact case (unquoted ones folded, as Postgres does). */
   functions: string[]
+  /** Everything the plan's expressions mention, for `assertFunctionsSafe`. */
+  refs: SqlRefs
   /** Every ModifyTable operation found anywhere in the plan. */
   modifyOperations: string[]
   /** True when the root node of the first plan is a ModifyTable. */
@@ -214,6 +188,7 @@ export function readPlan(queryPlan: unknown): PlanFacts {
 
   const relations: PlanRelation[] = []
   const functions = new Set<string>()
+  let refs: SqlRefs = { calls: [], operators: [], identifiers: [], opaque: false }
   const modifyOperations: string[] = []
   let rootIsModify = false
   let unfilteredWriteTarget: string | undefined
@@ -254,11 +229,19 @@ export function readPlan(queryPlan: unknown): PlanFacts {
 
       // A Function Scan carries `Schema` and `Function Name` but no relation.
       // Collecting Schema opportunistically would fabricate relation pairs.
+      // `Function Name` is the bare catalog name, exact case, never quoted.
       const fnName = node['Function Name']
-      if (typeof fnName === 'string') functions.add(stripSchema(fnName))
+      if (typeof fnName === 'string') {
+        functions.add(fnName)
+        refs.calls.push({ name: fnName, ...(typeof node.Schema === 'string' ? { schema: node.Schema } : {}) })
+      }
 
       for (const key of EXPRESSION_KEYS) {
-        collectCalls(node[key], functions)
+        for (const text of expressionTexts(node[key])) {
+          const found = sqlRefs(text)
+          refs = mergeSqlRefs(refs, found)
+          for (const call of found.calls) functions.add(call.name)
+        }
       }
     })
   })
@@ -266,6 +249,7 @@ export function readPlan(queryPlan: unknown): PlanFacts {
   return {
     relations,
     functions: [...functions],
+    refs,
     modifyOperations,
     rootIsModify,
     unfilteredWriteTarget,
@@ -295,35 +279,13 @@ function walk(node: unknown, visit: (node: PlanNode) => void): void {
   }
 }
 
-function stripSchema(name: string): string {
-  const dot = name.lastIndexOf('.')
-  return (dot === -1 ? name : name.slice(dot + 1)).replace(/"/g, '').toLowerCase()
+/** The strings under one plan key: a single expression or a list of them. */
+function expressionTexts(value: unknown): string[] {
+  if (typeof value === 'string') return [value]
+  if (Array.isArray(value)) return value.flatMap(expressionTexts)
+  return []
 }
 
-function collectCalls(value: unknown, into: Set<string>): void {
-  if (Array.isArray(value)) {
-    for (const item of value) collectCalls(item, into)
-    return
-  }
-  if (typeof value !== 'string') return
-
-  for (const match of value.matchAll(CALL_RE)) {
-    const name = match[1]!.toLowerCase()
-    if (!NOT_FUNCTIONS.has(name)) into.add(name)
-  }
-  // EXPLAIN prints a builtin unqualified while `pg_catalog` is on the path,
-  // but as `pg_catalog.name(` once a same-named function in an allowlisted
-  // schema shadows it — which `CALL_RE` skips for the dot. The statement text
-  // may have quoted it past `TEXT_CALL_RE` too (`"pg_catalog"."table_to_xml"(`),
-  // so this is the last place it can be seen.
-  for (const match of value.matchAll(CATALOG_CALL_RE)) into.add(match[1]!.toLowerCase())
-}
-
-/**
- * A ModifyTable whose only scan of the target has no qualifier is a whole-table
- * write. Cheap, and read off the plan rather than off the text, so `WHERE true`
- * is honoured and a WHERE inside a comment is not.
- */
 function isUnfiltered(node: PlanNode): boolean {
   const children = node.Plans
   if (!Array.isArray(children) || children.length === 0) return false
@@ -380,43 +342,99 @@ export function assertIsModify(facts: PlanFacts, allowWholeTable = false): void 
 }
 
 /**
- * Refuse any function the planner cannot see inside.
+ * Refuse any function the planner cannot see inside, however it is reached.
  *
  * A function body is opaque to the plan, so a call to one is a hole exactly the
- * size of whatever the role can read. Anything outside `pg_catalog`, anything
- * `SECURITY DEFINER`, and a denylist of builtins that reach outside the query
- * are all refused.
+ * size of whatever the role can read. Refused:
  *
- * The name collection is a heuristic over EXPLAIN's expression strings, not a
- * parse, and it errs toward refusing. Names that resolve to nothing — a column,
- * an operator, a cast — are ignored, so the cost of over-collecting is zero.
+ *   - **calls** to anything outside `pg_catalog`, anything `SECURITY DEFINER`,
+ *     and the builtins that reach outside the query (`reachesOutside`). Names
+ *     are matched with their exact case: `"Peek"` is a different function from
+ *     `peek`, and folding it found nothing.
+ *   - **operators** whose function is outside `pg_catalog` and can run SQL —
+ *     any language but C/internal — or is `SECURITY DEFINER`. `1 === 2` calls
+ *     that function with no `name(` anywhere. C operators from extensions
+ *     (hstore `->`, pg_trgm `%`) cannot run queries and stay allowed.
+ *   - **casts** backed by such a function, when the statement names the target
+ *     type or the cast can apply implicitly (`castcontext` `i`/`a`), since then
+ *     no type name need appear at all.
+ *   - **`U&"…" UESCAPE`**: an escape this reader does not decode.
+ *
+ * The references come from `sql-refs.ts`'s tokenizer, over the statement text
+ * and over the plan's expressions. Over-collecting is free: a name that
+ * resolves to nothing is dropped.
  */
-export async function assertFunctionsSafe(tx: TransactionSql, functions: string[]): Promise<void> {
-  const denied = functions.find(reachesOutside)
+export async function assertFunctionsSafe(tx: TransactionSql, refs: SqlRefs): Promise<void> {
+  if (refs.opaque) {
+    refuse('This connector will not run a statement with a U&"…" UESCAPE identifier: it cannot tell which function or table that names. Write the name plainly.')
+  }
+
+  const names = [...new Set(refs.calls.map(call => call.name))]
+  const denied = names.find(name => reachesOutside(name.toLowerCase()))
   if (denied) {
     refuse(`This connector will not run a query that calls ${denied}(). It reaches outside the tables this token is scoped to.`)
   }
 
-  const names = functions.filter(n => !reachesOutside(n))
-  if (names.length === 0) return
+  if (names.length) {
+    const rows = await tx<Array<{ proname: string, nspname: string, prosecdef: boolean }>>`
+      SELECT p.proname, n.nspname, p.prosecdef
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE p.proname = ANY (${names}::text[])`
 
-  const rows = await tx<Array<{ proname: string, nspname: string, prosecdef: boolean }>>`
-    SELECT p.proname, n.nspname, p.prosecdef
-    FROM pg_catalog.pg_proc p
-    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-    WHERE p.proname = ANY (${names}::text[])`
+    for (const row of rows) {
+      if (row.nspname !== 'pg_catalog') {
+        refuse(
+          `This connector will not run a query that calls ${row.nspname}.${row.proname}(). `
+          + 'It cannot see which tables a user-defined function reads, so it cannot check it against this token\'s allowed tables. '
+          + 'Rewrite the query against the tables directly.',
+        )
+      }
+      if (row.prosecdef) {
+        refuse(`This connector will not run a query that calls ${row.proname}(): it is SECURITY DEFINER and runs with privileges this token was not granted.`)
+      }
+    }
+  }
 
-  for (const row of rows) {
-    if (row.nspname !== 'pg_catalog') {
+  const operators = [...new Set(refs.operators)]
+  if (operators.length) {
+    const rows = await tx<Array<{ oprname: string, nspname: string, proname: string }>>`
+      SELECT o.oprname, n.nspname, p.proname
+      FROM pg_catalog.pg_operator o
+      JOIN pg_catalog.pg_proc p ON p.oid = o.oprcode
+      JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+      WHERE o.oprname = ANY (${operators}::text[])
+        AND n.nspname <> 'pg_catalog'
+        AND (l.lanname NOT IN ('c', 'internal') OR p.prosecdef)
+      LIMIT 1`
+    const row = rows[0]
+    if (row) {
       refuse(
-        `This connector will not run a query that calls ${row.nspname}.${row.proname}(). `
-        + 'It cannot see which tables a user-defined function reads, so it cannot check it against this token\'s allowed tables. '
-        + 'Rewrite the query against the tables directly.',
+        `This connector will not run a query that uses the operator ${row.oprname}: it calls ${row.nspname}.${row.proname}(), `
+        + 'a user-defined function this connector cannot check against this token\'s allowed tables.',
       )
     }
-    if (row.prosecdef) {
-      refuse(`This connector will not run a query that calls ${row.proname}(): it is SECURITY DEFINER and runs with privileges this token was not granted.`)
-    }
+  }
+
+  const identifiers = [...new Set(refs.identifiers)]
+  const casts = await tx<Array<{ typname: string, nspname: string, proname: string }>>`
+    SELECT t.typname, n.nspname, p.proname
+    FROM pg_catalog.pg_cast c
+    JOIN pg_catalog.pg_proc p ON p.oid = c.castfunc
+    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+    JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+    JOIN pg_catalog.pg_type t ON t.oid = c.casttarget
+    WHERE n.nspname <> 'pg_catalog'
+      AND (l.lanname NOT IN ('c', 'internal') OR p.prosecdef)
+      AND (c.castcontext IN ('i', 'a') OR t.typname = ANY (${identifiers}::text[]))
+    LIMIT 1`
+  const cast = casts[0]
+  if (cast) {
+    refuse(
+      `This connector will not run this query: a cast to ${cast.typname} calls ${cast.nspname}.${cast.proname}(), `
+      + 'a user-defined function this connector cannot check against this token\'s allowed tables.',
+    )
   }
 }
 
@@ -444,7 +462,7 @@ export async function assertRelationsInScope(
 
   // Before the empty-relations shortcut: `pg_stat_activity` plans to a bare
   // Function Scan with no relation at all.
-  const contentFunction = facts.functions.find(n => SCOPED_CONTENT_FUNCTIONS.has(n))
+  const contentFunction = facts.functions.find(n => SCOPED_CONTENT_FUNCTIONS.has(n.toLowerCase()))
   if (contentFunction) {
     refuse(
       `This connector token is scoped to specific tables, so it will not run a query that calls ${contentFunction}(): `

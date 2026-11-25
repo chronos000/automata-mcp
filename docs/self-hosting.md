@@ -345,7 +345,7 @@ server for everyone else:
 |---|---|---|
 | `NUXT_MCP_RATE_TOKEN_PER_MINUTE` | `120` | every request, per connector token |
 | `NUXT_MCP_RATE_ORG_PER_MINUTE` | `600` | every request, per organization (all its tokens together) |
-| `NUXT_MCP_RATE_EXPENSIVE_PER_MINUTE` | `30` | costly tools only, per connection: `search-messages`, `search-telegram-messages`, `search-emails` with `text`, and `run-query` without `explain` |
+| `NUXT_MCP_RATE_EXPENSIVE_PER_MINUTE` | `30` | costly tools only, per connection: `search-messages`, `search-telegram-messages`, `search-emails` with `text`, `run-query` without `explain`, `download-whatsapp-media` and `download-telegram-media` (each call and each followed download link) |
 
 With Compose or the single container, set them in `.env` without the `NUXT_`
 prefix (`MCP_RATE_TOKEN_PER_MINUTE`, …, and `REDIS_URL` below), as

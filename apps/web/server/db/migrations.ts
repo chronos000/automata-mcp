@@ -1005,9 +1005,28 @@ export const APP_MIGRATIONS: AppMigration[] = [
       -- deletion's locks. Partial: only the three types the scrub touches, a
       -- handful of rows per account. Predicates must stay implied by the
       -- scrub's WHERE (types written as literals there, never binds).
-      CREATE INDEX hosted_events_user_personal_idx ON app.hosted_events (user_id)
+      --
+      -- IF NOT EXISTS so an operator can build them first with CREATE INDEX
+      -- CONCURRENTLY (same names, same definitions) and skip the write lock
+      -- this build holds on a large table. IF NOT EXISTS matches by name only,
+      -- so an invalid index left by a failed concurrent build is dropped first
+      -- and rebuilt here rather than kept unusable.
+      DO $$
+      DECLARE idx text;
+      BEGIN
+        FOR idx IN
+          SELECT c.relname FROM pg_index i
+          JOIN pg_class c ON c.oid = i.indexrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'app' AND NOT i.indisvalid
+            AND c.relname IN ('hosted_events_user_personal_idx', 'hosted_events_org_created_idx')
+        LOOP
+          EXECUTE format('DROP INDEX app.%I', idx);
+        END LOOP;
+      END $$;
+      CREATE INDEX IF NOT EXISTS hosted_events_user_personal_idx ON app.hosted_events (user_id)
         WHERE type IN ('user.signed_up', 'user.email_changed');
-      CREATE INDEX hosted_events_org_created_idx ON app.hosted_events (org)
+      CREATE INDEX IF NOT EXISTS hosted_events_org_created_idx ON app.hosted_events (org)
         WHERE type = 'org.created';
     `,
   },

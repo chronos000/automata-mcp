@@ -26,14 +26,9 @@
  *   refuses such a statement rather than decode it.
  */
 
-export interface SqlCall {
-  name: string
-  schema?: string
-}
-
 export interface SqlRefs {
-  /** `name(` and `schema.name(`, with `OPERATOR(…)` excluded. */
-  calls: SqlCall[]
+  /** Called function names (`name(`, `schema.name(`), `OPERATOR(…)` excluded. */
+  calls: string[]
   /** Operator symbols, including the one inside `OPERATOR(schema.op)`. */
   operators: string[]
   /** Every identifier, for matching type names a cast may name. */
@@ -265,12 +260,16 @@ function tokenize(sql: string): { tokens: Token[], opaque: boolean } {
   return { tokens, opaque }
 }
 
-/** Functions, operators and identifiers `sql` mentions. See the file header. */
-export function sqlRefs(sql: string): SqlRefs {
+/**
+ * Functions, operators and identifiers `sql` mentions, appended to `into` when
+ * given (the plan pass collects every expression into one set, linearly).
+ * See the file header.
+ */
+export function sqlRefs(sql: string, into?: SqlRefs): SqlRefs {
   const { tokens, opaque } = tokenize(sql)
-  const calls: SqlCall[] = []
-  const operators: string[] = []
-  const identifiers: string[] = []
+  const refs = into ?? { calls: [], operators: [], identifiers: [], opaque: false }
+  const { calls, operators, identifiers } = refs
+  if (opaque) refs.opaque = true
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!
@@ -291,26 +290,10 @@ export function sqlRefs(sql: string): SqlRefs {
       continue
     }
     if (!token.quoted && NOT_CALLS.has(token.value)) continue
-
-    const dot = tokens[i - 1]
-    const qualifier = tokens[i - 2]
-    const schema = dot?.kind === 'punct' && dot.value === '.' && qualifier?.kind === 'ident'
-      ? qualifier.value
-      : undefined
-    calls.push(schema ? { name: token.value, schema } : { name: token.value })
+    // A qualifier (`zz.` in `zz.peek(`) changes nothing: names are resolved in
+    // every schema, so the call is refused wherever it lives.
+    calls.push(token.value)
   }
 
-  return { calls, operators, identifiers, opaque }
+  return refs
 }
-
-/** Two sets of references as one, for the statement text and its plan together. */
-export function mergeSqlRefs(a: SqlRefs, b: SqlRefs): SqlRefs {
-  return {
-    calls: [...a.calls, ...b.calls],
-    operators: [...a.operators, ...b.operators],
-    identifiers: [...a.identifiers, ...b.identifiers],
-    opaque: a.opaque || b.opaque,
-  }
-}
-
-export const EMPTY_SQL_REFS: SqlRefs = { calls: [], operators: [], identifiers: [], opaque: false }

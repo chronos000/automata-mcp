@@ -4,7 +4,7 @@ import { decideBuckets, type BucketCharge, type BucketState } from './token-buck
 import { REDIS_KEY_PREFIX, logRedisError, readyRedis } from './redis'
 import { rememberBounded } from './lookup-cache'
 import { isExpensiveCall } from './mcp-kind-tool'
-import type { RpcBody } from './mcp-rpc-body'
+import type { RpcBody, ToolCallInBody } from './mcp-rpc-body'
 
 /**
  * Per-minute budgets on `/mcp`, so one runaway agent loop cannot hammer
@@ -87,17 +87,25 @@ interface ScopedCharge extends BucketCharge { scope: RateScope }
 export function chargesFor(auth: Pick<McpAuth, 'tokenId' | 'instance'>, body: RpcBody): ScopedCharge[] {
   const budget = mcpRateLimits()
   const cost = body.messages
-  const expensive = body.calls.filter(call => isExpensiveCall(call.name, call.args)).length
 
   const charges: ScopedCharge[] = []
   if (budget.token) charges.push({ scope: 'token', key: `tok:${auth.tokenId}`, perMinute: budget.token, cost })
   if (budget.organization && auth.instance.org) {
     charges.push({ scope: 'organization', key: `org:${auth.instance.org}`, perMinute: budget.organization, cost })
   }
-  if (budget.connection && expensive) {
-    charges.push({ scope: 'connection', key: `exp:${auth.instance.id}`, perMinute: budget.connection, cost: expensive })
-  }
-  return charges
+  return [...charges, ...costlyChargeFor(auth, body.calls)]
+}
+
+/**
+ * The per-connection costly-tools charge for `calls`, or none when none is
+ * costly or the budget is off. Also what a followed media link pays: the
+ * backend fetch happens then, on that connection, whoever follows it.
+ */
+export function costlyChargeFor(auth: Pick<McpAuth, 'instance'>, calls: readonly ToolCallInBody[]): ScopedCharge[] {
+  const budget = mcpRateLimits()
+  const expensive = calls.filter(call => isExpensiveCall(call.name, call.args)).length
+  if (!budget.connection || !expensive) return []
+  return [{ scope: 'connection', key: `exp:${auth.instance.id}`, perMinute: budget.connection, cost: expensive }]
 }
 
 export interface BudgetRefusal {

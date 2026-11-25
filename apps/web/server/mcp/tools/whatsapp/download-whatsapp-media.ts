@@ -4,9 +4,9 @@ import { z } from 'zod'
  * Fetch the file a WhatsApp message carries. Never stored — not in the database,
  * not on disk — the same rule as IMAP attachments.
  *
- * **Opt-in.** Listed in `shared/opt-in-tools.ts`, so a token reaches it only
- * when it is ticked by name: "All actions" does not include it, and no token
- * minted before it existed gains it.
+ * **Opt-in** (`optIn` on `defineKindTool`), so a token reaches it only when it
+ * is ticked by name: "All actions" does not include it, and no token minted
+ * before it existed gains it.
  *
  * **Scope is checked against the chat, then the message against the chat.**
  * `findWhatsappMedia` asserts `jid` and looks the message up inside the
@@ -24,7 +24,7 @@ import { z } from 'zod'
  * is followed).
  */
 export default defineKindTool({
-  name: 'download-media',
+  name: 'download-whatsapp-media',
   kind: 'whatsapp',
   title: 'Download WhatsApp media',
   description:
@@ -47,6 +47,7 @@ export default defineKindTool({
     openWorldHint: true,
   },
   expensive: true,
+  optIn: true,
   inputSchema: {
     jid: z.string().min(1).max(200).describe('Chat identifier from list-chats or read-messages, exactly as returned'),
     messageId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/, 'a WhatsApp message id').describe('The message `id` from read-messages'),

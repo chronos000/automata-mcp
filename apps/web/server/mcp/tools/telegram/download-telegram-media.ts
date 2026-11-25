@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 /**
  * Fetch the file a Telegram message carries, through the bridge. Never stored.
- * Same rules as `download-media` (WhatsApp): opt-in by name (never covered by
+ * Same rules as `download-whatsapp-media` (WhatsApp): opt-in by name (never covered by
  * "All actions"), chat scope asserted before anything is fetched, small files
  * inline and larger ones by a signed URL only this token can follow.
  *
@@ -38,6 +38,7 @@ export default defineKindTool({
     openWorldHint: true,
   },
   expensive: true,
+  optIn: true,
   inputSchema: {
     chatId: z.string().regex(/^-?\d{1,20}$/, 'a chat id written as a string of digits')
       .describe('Chat id from list-telegram-chats or read-telegram-messages, as a string'),

@@ -1,5 +1,4 @@
 import { tools } from '#nuxt-mcp-toolkit/tools.mjs'
-import { isOptInTool } from '#shared/opt-in-tools'
 
 /**
  * The tool catalogue the scope editor renders checkboxes from, for one

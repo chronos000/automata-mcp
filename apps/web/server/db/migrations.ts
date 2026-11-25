@@ -994,4 +994,21 @@ export const APP_MIGRATIONS: AppMigration[] = [
         WHERE auth_failed AND last_success_at IS NOT NULL;
     `,
   },
+  {
+    name: '0032_hosted_events_personal_data',
+    sql: /* sql */ `
+      -- Account deletion strips personal data from the account's earlier
+      -- outbox rows (#322, scrubPersonalData in hosted-events.ts): signup and
+      -- email-change payloads by user, org.created by organization. The table
+      -- is never pruned and grows by a usage rollup per organization per
+      -- minute, so without these the scrub is a scan of all of it inside the
+      -- deletion's locks. Partial: only the three types the scrub touches, a
+      -- handful of rows per account. Predicates must stay implied by the
+      -- scrub's WHERE (types written as literals there, never binds).
+      CREATE INDEX hosted_events_user_personal_idx ON app.hosted_events (user_id)
+        WHERE type IN ('user.signed_up', 'user.email_changed');
+      CREATE INDEX hosted_events_org_created_idx ON app.hosted_events (org)
+        WHERE type = 'org.created';
+    `,
+  },
 ]

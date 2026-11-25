@@ -13,6 +13,7 @@
     "test:emails": "node --test apps/web/test/emails.test.mjs",
     "test:media": "node --test apps/web/test/base64-field.test.mjs",
     "test:pg-guard": "node --test apps/web/test/pg-guard.test.mjs",
+    "test:rate-limit": "node --test apps/web/test/mcp-rate-limit.test.mjs",
     "bridge:dev": "pnpm --filter telegram-bridge dev",
     "bridge:typecheck": "pnpm --filter telegram-bridge typecheck",
     "cloud:dev": "pnpm --filter cloud dev",

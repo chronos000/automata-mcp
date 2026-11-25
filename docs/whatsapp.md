@@ -2,7 +2,7 @@
 
 ## Which Evolution
 
-The deployment's own Evolution server runs **`evolution-api-reforged` 3.3.1**,
+The deployment's own Evolution server runs **`evolution-api-reforged` 3.3.3**,
 our fork of Evolution API
 ([repo](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged),
 formerly `ju-li/evolution-api-v2`). Every file that names it pins its digest:
@@ -114,6 +114,18 @@ What the fork changes, and why we run it:
   update, so the session read as online even with `alwaysOnline: false`, and
   WhatsApp held back push notifications on the phone until the number was
   unlinked. Those updates no longer send a presence.
+- **Media is downloaded from the right message** (3.3.2,
+  [#86](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged/issues/86)).
+  `getBase64FromMediaMessage` reloads the stored message by its full key
+  (chat, id, direction) instead of the id alone, which could return another
+  chat's file when a message id repeated. The same release acks contacts'
+  top-level `<status>` stanzas again (upstream 2.3.8), which stopped sessions
+  that read `open` from going quiet or dropping about every 50 minutes.
+- **Album items download** (3.3.3,
+  [#91](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged/issues/91)).
+  Photos and videos sent several at a time sit inside an
+  `associatedChildMessage` wrapper, which the media route now unwraps, in any
+  nesting order. Edited messages are still not unwrapped.
 
 ### Moving from stock Evolution 2.3.7
 

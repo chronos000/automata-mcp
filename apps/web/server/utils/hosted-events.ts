@@ -105,7 +105,7 @@ export function recordHostedEventQuietly(event: HostedEvent): void {
  * Keys are removed per event type, never "these keys from every row of the
  * user": `member.role_changed` also has `from`/`to`, holding roles, and must
  * keep them. Types are literals in the SQL, not binds, so the planner can match
- * the partial indexes from migration `0032` — the table is never pruned and a
+ * the partial indexes from migration `0033` — the table is never pruned and a
  * scan of it would sit inside the deletion's locks.
  *
  * Not gated on `hostedEventsEnabled()`: rows written while a deployment was

@@ -147,7 +147,7 @@ export default defineNuxtConfig({
     imapBackfillMax: '50000',
     imapAttachmentMaxBytes: String(10 * 1024 * 1024),
 
-    // WhatsApp / Telegram media downloads (download-media,
+    // WhatsApp / Telegram media downloads (download-whatsapp-media,
     // download-telegram-media): the largest file fetched at all, and the
     // largest returned inline in the tool result. Between the two, the tool
     // hands back a short-lived signed URL instead. Never stored. See

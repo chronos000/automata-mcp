@@ -98,7 +98,7 @@ export interface ChatMessage {
   unreadable?: UnreadableReason
   /**
    * Set only on a message carrying a file — photo, video, voice note, audio,
-   * document or sticker — so a caller knows what `download-media` can fetch.
+   * document or sticker — so a caller knows what `download-whatsapp-media` can fetch.
    * Absent on everything else: these keys are additive and never `false`.
    */
   hasMedia?: true

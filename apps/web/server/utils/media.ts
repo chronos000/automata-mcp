@@ -61,7 +61,7 @@ export type MediaKind = 'whatsapp' | 'telegram'
 export function mediaToolFor(kind: MediaKind): string {
   switch (kind) {
     case 'whatsapp':
-      return 'download-media'
+      return 'download-whatsapp-media'
     case 'telegram':
       return 'download-telegram-media'
     default:
@@ -174,13 +174,33 @@ export function mediaUrlResult(meta: Record<string, unknown>, url: string, expir
  * when that is known), so a small file asked for by link is never called large.
  */
 export function signedUrlUnavailable(inlineMax: number, over?: { size?: number }) {
-  console.error('[media] signed URL unavailable: NUXT_PUBLIC_APP_URL is not set')
+  const missing = mediaLinkBlocker() ?? 'NUXT_PUBLIC_APP_URL'
+  if (!loggedLinkBlocker) {
+    loggedLinkBlocker = true
+    console.error(`[media] signed download links unavailable: ${missing} is not set`)
+  }
   return createError({
     statusCode: 501,
     message: over
-      ? `This file is ${over.size !== undefined ? `about ${formatBytes(over.size)}, ` : ''}over the ${formatBytes(inlineMax)} returned inline, and this server cannot issue download links (its operator has not set NUXT_PUBLIC_APP_URL).`
-      : 'This server cannot issue download links (its operator has not set NUXT_PUBLIC_APP_URL).',
+      ? `This file is ${over.size !== undefined ? `about ${formatBytes(over.size)}, ` : ''}over the ${formatBytes(inlineMax)} returned inline, and this server cannot issue download links (its operator has not set ${missing}).`
+      : `This server cannot issue download links (its operator has not set ${missing}).`,
   })
+}
+
+let loggedLinkBlocker = false
+
+/**
+ * The setting that keeps this deployment from issuing download links, if any.
+ * A link needs a public URL to point at. On the hosted offering it also needs
+ * `NUXT_MEDIA_URL_SECRET`: the per-process fallback key would make a link minted
+ * on one replica a silent 404 on the next, and die with every deploy. A
+ * self-hosted single process can live with that, and its docs say so.
+ */
+export function mediaLinkBlocker(): 'NUXT_PUBLIC_APP_URL' | 'NUXT_MEDIA_URL_SECRET' | undefined {
+  const config = useRuntimeConfig()
+  if (!String(config.public.appUrl ?? '').trim()) return 'NUXT_PUBLIC_APP_URL'
+  if (hostedMode() && !String(config.mediaUrlSecret ?? '')) return 'NUXT_MEDIA_URL_SECRET'
+  return undefined
 }
 
 // ── bounded work ─────────────────────────────────────────────────────────────
@@ -554,14 +574,14 @@ function sealingKey(): Buffer {
 
 /**
  * An absolute signed URL for one message's media, or undefined when this
- * deployment has no public app URL to put in front of it.
+ * deployment cannot issue links (`mediaLinkBlocker`).
  *
  * The claim is **encrypted**, not only signed (AES-256-GCM): the chat id is a
  * phone number, and proxies log paths this app cannot redact.
  */
 export function signMediaUrl(ref: Omit<MediaRef, 'v' | 'e'>, now = Date.now()): { url: string, expiresAt: Date } | undefined {
+  if (mediaLinkBlocker()) return undefined
   const appUrl = String(useRuntimeConfig().public.appUrl ?? '').trim().replace(/\/+$/, '')
-  if (!appUrl) return undefined
 
   const expiresAt = new Date(now + MEDIA_URL_TTL_SECONDS * 1000)
   const full: MediaRef = { v: 1, ...ref, e: Math.floor(expiresAt.getTime() / 1000) }

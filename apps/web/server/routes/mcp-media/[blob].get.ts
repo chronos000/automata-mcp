@@ -5,14 +5,14 @@
 import '#nuxt-mcp-toolkit/tools.mjs'
 
 /**
- * Follow a signed media URL minted by `download-media` / `download-telegram-media`.
+ * Follow a signed media URL minted by `download-whatsapp-media` / `download-telegram-media`.
  *
  * MCP side of the auth split: the bearer token is required here exactly as on
  * `/mcp` (never a cookie — `isMcpPath` covers this prefix, so the session
  * middleware skips it and the path is redacted from logs), and it must be the
  * token the URL was minted for. Then every check the tool ran is run again —
  * the token may have been narrowed or revoked since: the opt-in tool still
- * granted, the per-minute budgets, the chat in scope, the message in that chat.
+ * granted, the costly-tools budget, the chat in scope, the message in that chat.
  * Only then is the file fetched, fresh; nothing was stored when the URL was made.
  *
  * No usable token = 401, before the link is opened. Anything that does not
@@ -45,13 +45,16 @@ export default defineEventHandler(async (event) => {
   event.context.mcpAuth = auth
 
   const tool = mediaToolFor(ref.k)
-  if (!isToolAllowed(event, tool, ref.k)) {
+  if (!isToolAllowed(event, tool, ref.k, { optIn: true })) {
     throw createError({ statusCode: 403, statusMessage: 'This connector token may no longer download media.' })
   }
 
-  // Charged like one call of the tool: the token's and organization's
-  // budgets, and the per-connection budget for costly tools.
-  const throttled = await takeMcpBudget(chargesFor(auth, [{ name: tool, args: {} }]))
+  // The tool call that minted this link was charged on /mcp, against the
+  // token's and organization's budgets and the costly-tools one. Following it is
+  // when the backend actually fetches the file, so only the per-connection
+  // costly-tools budget is charged again: it protects that connection's
+  // Evolution or bridge, whoever follows.
+  const throttled = await takeMcpBudget(chargesFor(auth, [{ name: tool, args: {} }]).filter(charge => charge.scope === 'connection'))
   if (throttled) return mcpRateLimited(throttled)
 
   // Counted and recorded like a call of the tool (name and outcome only), so a

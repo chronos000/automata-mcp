@@ -53,6 +53,7 @@ pnpm typecheck        # nuxt typecheck across app + server
 pnpm test:emails      # account-email snapshots + rules (node --test; UPDATE_SNAPSHOTS=1 to accept)
 pnpm test:media       # streaming base64 decoder behind WhatsApp media downloads (node --test)
 pnpm test:pg-guard    # SQL guard's reaching-builtin gate (node --test)
+pnpm test:rate-limit  # MCP rate limit: body counting + bucket arithmetic (node --test)
 pnpm build            # production build -> apps/web/.output/
 pnpm listings:check   # directory listings agree with package.json version + tool names
 pnpm release:version X.Y.Z   # write version into package.json + every listing
@@ -61,7 +62,7 @@ pnpm cloud:crm-backfill      # one-off Brevo upsert of every user (hosted)
 pnpm services:down / :logs / :ps
 ```
 
-Nuxt deliberately **not** in compose (HMR); no `predev` hook — bring services up yourself. No lint config, **no test framework**; `pnpm typecheck` + `pnpm bridge:typecheck` + `pnpm cloud:typecheck` + `pnpm test:emails` + `pnpm test:media` + `pnpm test:pg-guard` (Node's built-in runner over the email templates, the base64 decoder and the SQL guard's builtin gate, nothing else) only automated checks.
+Nuxt deliberately **not** in compose (HMR); no `predev` hook — bring services up yourself. No lint config, **no test framework**; `pnpm typecheck` + `pnpm bridge:typecheck` + `pnpm cloud:typecheck` + `pnpm test:emails` + `pnpm test:media` + `pnpm test:pg-guard` + `pnpm test:rate-limit` (Node's built-in runner over the email templates, the base64 decoder, the SQL guard's builtin gate and the rate limit's arithmetic, nothing else) only automated checks.
 
 ## Environment
 
@@ -321,12 +322,14 @@ Rules easy to undo:
 
 ## MCP rate limits
 
-`server/utils/mcp-rate-limit.ts` (#170), arithmetic in `token-bucket.ts` (no imports, testable in plain Node), optional Redis in `redis.ts`. Three token buckets, each "N per minute, up to N at once": `tok:<token>` and `org:<org>` charged every `/mcp` POST (cost = max(1, `tools/call`s in body)), `exp:<instance>` charged per call to a tool declaring `expensive` on `defineKindTool` (`true` or a predicate over raw args — `search-messages`, `search-telegram-messages`, `search-emails` with `text`, `run-query` unless `explain`, the image sends, both media downloads), since it protects that connection's backend whatever token reaches it. `NUXT_MCP_RATE_TOKEN_PER_MINUTE` / `_ORG_` / `_EXPENSIVE_` (120 / 600 / 30), `0` = off. Same on every plan; plan copy says "Unlimited requests*", always with fine print "* Subject to generous rate limits. Rate limits are to protect our servers from abuse." (`signup.vue`, `billing.vue`) — never the asterisk alone.
+`server/utils/mcp-rate-limit.ts` (#170), arithmetic in `token-bucket.ts` (no imports, testable in plain Node), optional Redis in `redis.ts`. Three token buckets, each "N per minute, up to N at once": `tok:<token>` and `org:<org>` charged every `/mcp` POST (cost = JSON-RPC messages in body, `rpcBodyOf()` in `mcp-rpc-body.ts`), `exp:<instance>` charged per call to a tool declaring `expensive` on `defineKindTool` (`true` or a predicate over raw args — `search-messages`, `search-telegram-messages`, `search-emails` with `text`, `run-query` unless `explain`, the image sends, both media downloads), since it protects that connection's backend whatever token reaches it. `NUXT_MCP_RATE_TOKEN_PER_MINUTE` / `_ORG_` / `_EXPENSIVE_` (120 / 600 / 30), `0` = off. Same on every plan; plan copy says "Unlimited requests*", always with fine print "* Subject to generous rate limits. Rate limits are to protect our servers from abuse." (`signup.vue`, `billing.vue`) — never the asterisk alone.
 
 Rules easy to undo:
 
 - **All or nothing.** Fits every bucket or takes from none, so a throttled token never drains its org. Refusal = **429 + `Retry-After`**, JSON-RPC `-32003` naming the scope — **never 401** (client drops token).
-- **Checked in `server/mcp/index.ts` after auth, `mcpLimitRefusal` and body read, before `captureTokenClient`** — throttled request writes nothing; body parsed only past a `tools/call` substring test.
+- **Checked in `server/mcp/index.ts` after auth, `mcpLimitRefusal` and body read, before `captureTokenClient`** — throttled request writes nothing.
+- **Body always parsed, every message counted.** Never gate on a substring: `"tools\/call"` is valid JSON the SDK runs, and a `raw.includes('tools/call')` test charged it nothing. SDK runs every element of a batch, so each message costs 1 (`tools/list` too); `expensive` counts the tool calls among them.
+- **Never clamp cost to a bucket.** Cost above a bucket's size = **400, JSON-RPC `-32600`** (`mcpRequestTooLarge`), no `Retry-After` (waiting never fits it), nothing taken. Clamping let one 20k-call batch cost 120. `decideBuckets` and the Lua refuse it too (second line). `pnpm test:rate-limit` pins both.
 - **Redis = `NUXT_REDIS_URL`, hosted only; self-hosted counts in-process** (N replicas = N× budget, documented). One Lua script (`RATE_LIMIT_SCRIPT`) restates `decideBuckets()` — change both together — on Redis's own `TIME`, refused request writes nothing, keys `automata:rl:*` with 60 s PEXPIRE. Client fails fast (`enableOfflineQueue: false`, 250 ms command timeout); Redis not `ready` (`readyRedis()`, shared with the caches) or any Redis error → in-process for that request, logged ≤ once a minute per context — **never 503**: losing shared counts must not take every connector down. Every key prefixed `automata:` with a TTL; never `FLUSH*`/`CONFIG`/`KEYS`; never read Evolution's `CACHE_REDIS_URI`. URL never logged.
 - Ids only in Redis and log — no args, no `reason`.
 

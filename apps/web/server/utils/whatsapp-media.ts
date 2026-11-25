@@ -47,13 +47,15 @@ export async function findWhatsappMedia(auth: WhatsappAuth, jid: string, message
       statusCode: 422,
       message: node?.viewOnce || isViewOnceWrapped(row.message)
         ? 'This is a view-once message; its media is not downloadable here.'
-        : 'This message carries no downloadable file (photo, video, voice note, audio, document or sticker).',
+        : node?.node.mediaKey && !mediaLocated(node.node)
+          ? 'WhatsApp did not record where this message\'s file is stored, so it cannot be downloaded.'
+          : 'This message carries no downloadable file (photo, video, voice note, audio, document or sticker).',
     })
   }
   if (!mediaReferenceIsSafe(node.node)) {
     throw createError({
       statusCode: 422,
-      message: 'This message\'s file does not point at WhatsApp\'s media servers, so it was not downloaded.',
+      message: 'This message\'s file points somewhere other than WhatsApp\'s media servers, so it was not downloaded.',
     })
   }
 
@@ -143,7 +145,7 @@ function onHost(value: string, allowed: (hostname: string) => boolean): boolean 
  */
 function downloadPayload(media: WhatsappMediaNode): Record<string, unknown> {
   if (!mediaReferenceIsSafe(media.node)) {
-    throw createError({ statusCode: 422, message: 'This message\'s file does not point at WhatsApp\'s media servers, so it was not downloaded.' })
+    throw createError({ statusCode: 422, message: 'This message\'s file points somewhere other than WhatsApp\'s media servers, so it was not downloaded.' })
   }
   const { url, ...rest } = media.node
   return { [media.key]: rest.directPath === undefined ? { ...rest, url } : rest }
@@ -203,11 +205,12 @@ export async function fetchWhatsappMedia(auth: WhatsappAuth, target: WhatsappMed
     console.error(`[media] WhatsApp download on connection ${auth.instance.id} failed: Evolution answered ${status ?? (error as Error | undefined)?.name ?? 'nothing'}`)
     const said = JSON.stringify((error as { data?: unknown } | undefined)?.data ?? '')
     if (status === 400 && /not of the media type/i.test(said)) {
-      // evolution-api-reforged reloads the stored row and does not unwrap a
-      // wrapped message the way this app does; say what it is, not "expired".
+      // evolution-api-reforged reloads the stored row and unwraps fewer
+      // wrappers than this app does (album items, edits: reforged#91); say
+      // what it is, not "expired".
       throw createError({
         statusCode: 422,
-        message: 'This WhatsApp server cannot download this kind of message (a wrapped one: an album item, an edited or a disappearing-chat message). Its media is not reachable through this connector.',
+        message: 'This WhatsApp server cannot download this kind of message (a wrapped one, such as a photo sent as part of an album, or an edited message). Its media is not reachable through this connector yet.',
       })
     }
     if (status === 400) {

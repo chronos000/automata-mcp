@@ -713,14 +713,18 @@ them. `download-whatsapp-media` fetches the file by the chat's `jid` and the mes
   chat's file; the app compares the file's SHA-256 with the one WhatsApp
   recorded on the message and refuses a mismatch (409) without returning
   anything. Update to 3.3.2 or later.
-- **Not downloadable:** view-once media; a message whose file reference does
-  not point at WhatsApp's media servers (the stored message is the sender's, and
-  Evolution would fetch whatever address it names — refused with 422); on
-  evolution-api-reforged, a wrapped message (an album item, an edited or a
-  disappearing-chat message: it reloads the stored row by id and does not unwrap
-  it, where stock 2.3.7 downloads the unwrapped node the app sends — 422); and
-  old media WhatsApp no longer holds — Evolution asks the phone to re-upload
+- **Not downloadable:** view-once media; a message whose file reference
+  points somewhere other than WhatsApp's media servers (the stored message is
+  the sender's, and Evolution would fetch whatever address it names — refused
+  with 422); a message that records no file location at all (seen on messages
+  from WhatsApp's own account, `0@s.whatsapp.net` — not marked `hasMedia`); on
+  evolution-api-reforged, a wrapped message such as a photo sent as part of an
+  album or an edited message (it reloads the stored row and does not unwrap it,
+  where stock 2.3.7 downloads the unwrapped node the app sends — 422; album
+  items: [reforged#91](https://github.com/Operational-Intelligence-Inc/evolution-api-reforged/issues/91));
+  and old media WhatsApp no longer holds — Evolution asks the phone to re-upload
   expired media, which works only while the phone is online and still has it.
+  In testing, most media more than a couple of weeks old had expired.
 
 ## Chats addressed by LID (`…@lid`)
 

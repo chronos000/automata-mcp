@@ -1338,16 +1338,16 @@ function mediaNodeOf(payload: Record<string, any> | undefined): WhatsappMediaNod
  * The file a WhatsApp message carries, or undefined.
  *
  * Only a node that can be downloaded counts: one with a `mediaKey` (a caption
- * edit nests an `imageMessage` without one) that is not view-once — newer
- * clients flag view-once on the node itself as well as with a wrapper, and a
- * view-once photo presented as an ordinary downloadable one is not what the
- * sender chose.
+ * edit nests an `imageMessage` without one) and a place to fetch it from
+ * (`mediaLocated`), that is not view-once — newer clients flag view-once on the
+ * node itself as well as with a wrapper, and a view-once photo presented as an
+ * ordinary downloadable one is not what the sender chose.
  *
  * Every value is the sender's claim — `fileLength` included — so it describes,
  * and the download re-checks the bytes.
  */
 function mediaOfNode(media: WhatsappMediaNode | undefined): WhatsappMediaInfo | undefined {
-  if (!media || media.viewOnce || !media.node.mediaKey) return undefined
+  if (!media || media.viewOnce || !media.node.mediaKey || !mediaLocated(media.node)) return undefined
   const { key, kind, node } = media
   const mimetype = typeof node.mimetype === 'string' ? cleanMimeType(node.mimetype) : undefined
   return {
@@ -1356,6 +1356,18 @@ function mediaOfNode(media: WhatsappMediaNode | undefined): WhatsappMediaInfo | 
     ...(key === 'documentMessage' && cleanFileName(node.fileName) && { fileName: cleanFileName(node.fileName) }),
     ...(fileLengthOf(node.fileLength) !== undefined && { fileSize: fileLengthOf(node.fileLength) }),
   }
+}
+
+/**
+ * Whether a media node says where its file is: a non-empty `directPath` or
+ * `url`. Some stored nodes carry a `mediaKey` and neither — seen on messages
+ * from WhatsApp's own account (`0@s.whatsapp.net`) — and nothing can fetch
+ * those, so they are not marked `hasMedia`. Whether a location is *safe* to
+ * fetch is a separate check, at download time (`mediaReferenceIsSafe`).
+ */
+export function mediaLocated(node: Record<string, unknown>): boolean {
+  const filled = (value: unknown) => typeof value === 'string' && value.length > 0
+  return filled(node.directPath) || filled(node.url)
 }
 
 function mediaOfPayload(payload: Record<string, any> | undefined): WhatsappMediaInfo | undefined {
